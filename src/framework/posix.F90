@@ -52,34 +52,6 @@ interface
       !< Function return code
   end function chmod_posix
 
-  !> C interface to POSIX mkdir()
-  !! Users should use the Fortran-defined mkdir() function.
-  function mkdir_posix(path, mode) result(rc) bind(c, name="mkdir")
-    ! #include <sys/stat.h>
-    ! int mkdir(const char *path, mode_t mode);
-    import :: c_char, c_int
-
-    character(kind=c_char), dimension(*), intent(in) :: path
-      !< Zero-delimited file path
-    integer(kind=c_int), value, intent(in) :: mode
-      !< File permission to be assigned to file.
-    integer(kind=c_int) :: rc
-      !< Function return code
-  end function mkdir_posix
-
-  !> C interface to POSIX stat()
-  !! Users should use the Fortran-defined stat() function.
-  function stat_posix(path, buf) result(rc) bind(c, name="stat")
-    import :: c_char, stat_buf, c_int
-
-    character(kind=c_char), dimension(*), intent(in) :: path
-      !< Pathname of a POSIX file
-    type(stat_buf), intent(inout) :: buf
-      !< Information describing the file if it exists
-    integer(kind=c_int) :: rc
-      !< Function return code
-  end function
-
   !> C interface to POSIX signal()
   !! Users should use the Fortran-defined signal() function.
   function signal_posix(sig, func) result(handle) bind(c, name="signal")
