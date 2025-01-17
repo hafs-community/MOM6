@@ -89,6 +89,7 @@ subroutine mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary,
   real(ESMF_KIND_R8), allocatable :: stkx(:,:,:)
   real(ESMF_KIND_R8), allocatable :: stky(:,:,:)
   character(len=*)  , parameter   :: subname = '(mom_import)'
+  real(ESMF_KIND_R8), parameter   :: fillValue = 9.99e20_ESMF_KIND_R8
 
   rc = ESMF_SUCCESS
 
@@ -351,10 +352,15 @@ subroutine mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary,
           ig = i + ocean_grid%isc - isc
           !rotate
           do ib = 1, nsc
-            ice_ocean_boundary%ustkb(i,j,ib) = ocean_grid%cos_rot(ig,jg)*stkx(i,j,ib) &
+            if(abs(stkx(i,j,ib)-fillValue).lt.0.01) then
+              ice_ocean_boundary%ustkb(i,j,ib) = 0.0
+              ice_ocean_boundary%vstkb(i,j,ib) = 0.0
+            else 
+              ice_ocean_boundary%ustkb(i,j,ib) = ocean_grid%cos_rot(ig,jg)*stkx(i,j,ib) &
                  - ocean_grid%sin_rot(ig,jg)*stky(i,j,ib)
-            ice_ocean_boundary%vstkb(i,j,ib) = ocean_grid%cos_rot(ig,jg)*stky(i,j,ib) &
+              ice_ocean_boundary%vstkb(i,j,ib) = ocean_grid%cos_rot(ig,jg)*stky(i,j,ib) &
                  + ocean_grid%sin_rot(ig,jg)*stkx(i,j,ib)
+            endif 
           enddo
           ! apply masks
           ice_ocean_boundary%ustkb(i,j,:) = ice_ocean_boundary%ustkb(i,j,:) * ocean_grid%mask2dT(ig,jg)
