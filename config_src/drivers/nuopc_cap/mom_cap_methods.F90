@@ -352,7 +352,7 @@ subroutine mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary,
           ig = i + ocean_grid%isc - isc
           !rotate
           do ib = 1, nsc
-            if(abs(stkx(i,j,ib)-fillValue).lt.0.01) then
+            if(abs(stkx(i,j,ib)-fillValue) <= 0.01) then
               ice_ocean_boundary%ustkb(i,j,ib) = 0.0
               ice_ocean_boundary%vstkb(i,j,ib) = 0.0
             else
