@@ -355,12 +355,12 @@ subroutine mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary,
             if(abs(stkx(i,j,ib)-fillValue).lt.0.01) then
               ice_ocean_boundary%ustkb(i,j,ib) = 0.0
               ice_ocean_boundary%vstkb(i,j,ib) = 0.0
-            else 
+            else
               ice_ocean_boundary%ustkb(i,j,ib) = ocean_grid%cos_rot(ig,jg)*stkx(i,j,ib) &
                  - ocean_grid%sin_rot(ig,jg)*stky(i,j,ib)
               ice_ocean_boundary%vstkb(i,j,ib) = ocean_grid%cos_rot(ig,jg)*stky(i,j,ib) &
                  + ocean_grid%sin_rot(ig,jg)*stkx(i,j,ib)
-            endif 
+            endif
           enddo
           ! apply masks
           ice_ocean_boundary%ustkb(i,j,:) = ice_ocean_boundary%ustkb(i,j,:) * ocean_grid%mask2dT(ig,jg)
