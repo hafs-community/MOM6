@@ -1758,8 +1758,10 @@ subroutine ModelAdvance(gcomp, rc)
     !---------------
     ! Import data
     !---------------
+    call NUOPC_CompAttributeGet(gcomp, name='case_name', value=casename, rc=rc)
+    if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
-    call mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, rc=rc)
+    call mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, casename, rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
     !---------------
@@ -1831,8 +1833,6 @@ subroutine ModelAdvance(gcomp, rc)
       if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
       if (cesm_coupled) then
-        call NUOPC_CompAttributeGet(gcomp, name='case_name', value=casename, rc=rc)
-        if (ChkErr(rc,__LINE__,u_FILE_u)) return
         call ESMF_GridCompGet(gcomp, vm=vm, rc=rc)
         if (ChkErr(rc,__LINE__,u_FILE_u)) return
         call ESMF_VMGet(vm, localPet=localPet, rc=rc)
