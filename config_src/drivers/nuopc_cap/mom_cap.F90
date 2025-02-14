@@ -140,6 +140,7 @@ logical              :: profile_memory = .true.
 logical              :: grid_attach_area = .false.
 logical              :: use_coldstart = .true.
 logical              :: use_mommesh = .true.
+logical              :: set_missing_stks_to_zero = .false.
 logical              :: restart_eor = .false.
 character(len=128)   :: scalar_field_name = ''
 integer              :: scalar_field_count = 0
@@ -365,6 +366,14 @@ subroutine InitializeP0(gcomp, importState, exportState, clock, rc)
   if (isPresent .and. isSet) use_coldstart=(trim(value)=="true")
   write(logmsg,*) use_coldstart
   call ESMF_LogWrite('MOM_cap:use_coldstart = '//trim(logmsg), ESMF_LOGMSG_INFO)
+
+  set_missing_stks_to_zero = .false.
+  call NUOPC_CompAttributeGet(gcomp, name="set_missing_stks_to_zero", value=value, &
+       isPresent=isPresent, isSet=isSet, rc=rc)
+  if (ChkErr(rc,__LINE__,u_FILE_u)) return
+  if (isPresent .and. isSet) set_missing_stks_to_zero=(trim(value)=="true")
+  write(logmsg,*) set_missing_stks_to_zero
+  call ESMF_LogWrite('MOM_cap:set_missing_stks_to_zero = '//trim(logmsg), ESMF_LOGMSG_INFO)
 
   use_mommesh = .true.
   call NUOPC_CompAttributeGet(gcomp, name="use_mommesh", value=value, &
@@ -1761,7 +1770,7 @@ subroutine ModelAdvance(gcomp, rc)
     call NUOPC_CompAttributeGet(gcomp, name='case_name', value=casename, rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
-    call mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, casename, rc=rc)
+    call mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, casename, set_missing_stks_to_zero, rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
     !---------------
