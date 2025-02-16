@@ -72,14 +72,17 @@ end subroutine mom_set_geomtype
 !> This function has a few purposes:
 !! (1) it imports surface fluxes using data from the mediator; and
 !! (2) it can apply restoring in SST and SSS.
-subroutine mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, casename, set_missing_stks_to_zero, rc)
-  type(ocean_public_type)       , intent(in)    :: ocean_public               !< Ocean surface state
-  type(ocean_grid_type)         , intent(in)    :: ocean_grid                 !< Ocean model grid
-  character(ESMF_MAXSTR)        , intent(in)    :: casename                   !< Case name for the experiment
-  logical, optional             , intent(in)    :: set_missing_stks_to_zero   !< If true, set missing stokes drift to zero
-  type(ESMF_State)              , intent(inout) :: importState                !< incoming data from mediator
-  type(ice_ocean_boundary_type) , intent(inout) :: ice_ocean_boundary         !< Ocean boundary forcing
-  integer                       , intent(inout) :: rc                         !< Return code
+!! (3) it can convert imported stokes drift components to zero if they are missing.
+subroutine mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, casename, &
+                      set_missing_stks_to_zero, rc)
+  type(ocean_public_type)       , intent(in)    :: ocean_public             !< Ocean surface state
+  type(ocean_grid_type)         , intent(in)    :: ocean_grid               !< Ocean model grid
+  character(ESMF_MAXSTR)        , intent(in)    :: casename                 !< Case name for the experiment
+  logical                       , intent(in)    :: set_missing_stks_to_zero !< If true, set
+                                                                            !! missing stokes drift to zero
+  type(ESMF_State)              , intent(inout) :: importState              !< incoming data from mediator
+  type(ice_ocean_boundary_type) , intent(inout) :: ice_ocean_boundary       !< Ocean boundary forcing
+  integer                       , intent(inout) :: rc                       !< Return code
 
   ! Local Variables
   integer                         :: i, j, ib, ig, jg, n
