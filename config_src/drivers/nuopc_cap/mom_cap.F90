@@ -1770,7 +1770,8 @@ subroutine ModelAdvance(gcomp, rc)
     call NUOPC_CompAttributeGet(gcomp, name='case_name', value=casename, rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
-    call mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary, casename, set_missing_stks_to_zero, rc=rc)
+    call mom_import(ocean_public, ocean_grid, importState, ice_ocean_boundary,  &
+                    casename, set_missing_stks_to_zero, rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
     !---------------
