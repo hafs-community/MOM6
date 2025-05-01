@@ -20,6 +20,7 @@ use MOM_io,            only : field_size, read_variable, read_attribute, open_AS
 use MOM_io,            only : axis_info, set_axis_info, delete_axis_info, get_filename_appendix
 use MOM_io,            only : attribute_info, set_attribute_info, delete_attribute_info
 use MOM_io,            only : APPEND_FILE, SINGLE_FILE, WRITEONLY_FILE
+use MOM_spatial_means, only : array_global_min_max
 use MOM_time_manager,  only : time_type, get_time, get_date, set_time, operator(>)
 use MOM_time_manager,  only : operator(+), operator(-), operator(*), operator(/)
 use MOM_time_manager,  only : operator(/=), operator(<=), operator(>=), operator(<)
@@ -113,7 +114,8 @@ type, public :: sum_output_CS ; private
   real    :: timeunit           !< The length of the units for the time axis and certain input parameters
                                 !! including ENERGYSAVEDAYS [s].
 
-  logical :: date_stamped_output !< If true, use dates (not times) in messages to stdout.
+  logical :: date_ISO_stamped_output !< If true, use ISO formatted dates in messages to stdout.
+  logical :: date_stamped_output     !< If true, use dates (not times) in messages to stdout.
   type(time_type) :: Start_time !< The start time of the simulation.
                                 ! Start_time is set in MOM_initialization.F90
   integer, pointer :: ntrunc => NULL() !< The number of times the velocity has been
@@ -124,6 +126,12 @@ type, public :: sum_output_CS ; private
                                 !! interval at which the run is stopped.
   logical :: write_stocks       !< If true, write the integrated tracer amounts
                                 !! to stdout when the energy files are written.
+  logical :: write_min_max      !< If true, write the maximum and minimum values of temperature,
+                                !! salinity and some tracer concentrations to stdout when the energy
+                                !! files are written.
+  logical :: write_min_max_loc  !< If true, write the locations of the maximum and minimum values
+                                !! of temperature, salinity and some tracer concentrations to stdout
+                                !! when the energy files are written.
   integer :: previous_calls = 0 !< The number of times write_energy has been called.
   integer :: prev_n = 0         !< The value of n from the last call.
   type(MOM_netcdf_file) :: fileenergy_nc !< The file handle for the netCDF version of the energy file.
@@ -179,6 +187,15 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
   call get_param(param_file, mdl, "ENABLE_THERMODYNAMICS", CS%use_temperature, &
                  "If true, Temperature and salinity are used as state "//&
                  "variables.", default=.true.)
+  call get_param(param_file, mdl, "WRITE_TRACER_MIN_MAX", CS%write_min_max, &
+                 "If true, write the maximum and minimum values of temperature, salinity and "//&
+                 "some tracer concentrations to stdout when the energy files are written.", &
+                 default=.false., do_not_log=.not.CS%write_stocks, debuggingParam=.true.)
+  call get_param(param_file, mdl, "WRITE_TRACER_MIN_MAX_LOC", CS%write_min_max_loc, &
+                 "If true, write the locations of the maximum and minimum values of "//&
+                 "temperature, salinity and some tracer concentrations to stdout when the "//&
+                 "energy files are written.", &
+                 default=.false., do_not_log=.not.CS%write_min_max, debuggingParam=.true.)
   call get_param(param_file, mdl, "DT", CS%dt_in_T, &
                  "The (baroclinic) dynamics time step.", &
                  units="s", scale=US%s_to_T, fail_if_missing=.true.)
@@ -219,6 +236,9 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
   CS%energyfile = trim(CS%energyfile)//"."//trim(adjustl(STATSLABEL))
 #endif
 
+  call get_param(param_file, mdl, "DATE_ISO_STAMPED_STDOUT", CS%date_ISO_stamped_output, &
+                 "If true, use ISO formatted dates in messages to stdout", &
+                 default=.false.)
   call get_param(param_file, mdl, "DATE_STAMPED_STDOUT", CS%date_stamped_output, &
                  "If true, use dates (not times) in messages to stdout", &
                  default=.true.)
@@ -401,9 +421,37 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   real    :: reday  ! Time in units given by CS%Timeunit, but often [days]
   character(len=240) :: energypath_nc
   character(len=200) :: mesg
-  character(len=32)  :: mesg_intro, time_units, day_str, n_str, date_str
-  logical :: date_stamped
+  character(len=32)  :: mesg_intro, time_units, day_str, n_str, date_str, date_str_ISO
+  logical :: date_stamped, date_ISO_stamped
   type(time_type) :: dt_force ! A time_type version of the forcing timestep.
+
+  real :: S_min   ! The global minimum unmasked value of the salinity [ppt]
+  real :: S_max   ! The global maximum unmasked value of the salinity [ppt]
+  real :: S_min_x ! The x-positions of the global salinity minima
+                  ! in the units of G%geoLonT, often [degrees_E] or [km]
+  real :: S_min_y ! The y-positions of the global salinity minima
+                  ! in the units of G%geoLatT, often [degrees_N] or [km]
+  real :: S_min_z ! The z-positions of the global salinity minima [layer]
+  real :: S_max_x ! The x-positions of the global salinity maxima
+                  ! in the units of G%geoLonT, often [degrees_E] or [km]
+  real :: S_max_y ! The y-positions of the global salinity maxima
+                  ! in the units of G%geoLatT, often [degrees_N] or [km]
+  real :: S_max_z ! The z-positions of the global salinity maxima [layer]
+
+  real :: T_min   ! The global minimum unmasked value of the temperature [degC]
+  real :: T_max   ! The global maximum unmasked value of the temperature [degC]
+  real :: T_min_x ! The x-positions of the global temperature minima
+                  ! in the units of G%geoLonT, often [degreeT_E] or [km]
+  real :: T_min_y ! The y-positions of the global temperature minima
+                  ! in the units of G%geoLatT, often [degreeT_N] or [km]
+  real :: T_min_z ! The z-positions of the global temperature minima [layer]
+  real :: T_max_x ! The x-positions of the global temperature maxima
+                  ! in the units of G%geoLonT, often [degreeT_E] or [km]
+  real :: T_max_y ! The y-positions of the global temperature maxima
+                  ! in the units of G%geoLatT, often [degreeT_N] or [km]
+  real :: T_max_z ! The z-positions of the global temperature maxima [layer]
+
+
   ! The units of the tracer stock vary between tracers, with [conc] given explicitly by Tr_units.
   real :: Tr_stocks(MAX_FIELDS_) ! The total amounts of each of the registered tracers [kg conc]
   real :: Tr_min(MAX_FIELDS_)   ! The global minimum unmasked value of the tracers [conc]
@@ -428,6 +476,9 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
 
  ! A description for output of each of the fields.
   type(vardesc) :: vars(NUM_FIELDS+MAX_FIELDS_)
+
+  date_stamped = (CS%date_stamped_output .and. (get_calendar_type() /= NO_CALENDAR))
+  date_ISO_stamped = (CS%date_ISO_stamped_output .and. (get_calendar_type() /= NO_CALENDAR))
 
   ! write_energy_time is the next integral multiple of energysavedays.
   dt_force = set_time(seconds=2) ; if (present(dt_forcing)) dt_force = dt_forcing
@@ -527,17 +578,33 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
 
   nTr_stocks = 0
   Tr_minmax_avail(:) = .false.
-  call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
-                          stock_units=Tr_units, num_stocks=nTr_stocks,&
-                          got_min_max=Tr_minmax_avail, global_min=Tr_min, global_max=Tr_max, &
-                          xgmin=Tr_min_x, ygmin=Tr_min_y, zgmin=Tr_min_z,&
-                          xgmax=Tr_max_x, ygmax=Tr_max_y, zgmax=Tr_max_z)
+  if (CS%write_min_max .and. CS%write_min_max_loc) then
+    call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
+                            stock_units=Tr_units, num_stocks=nTr_stocks,&
+                            got_min_max=Tr_minmax_avail, global_min=Tr_min, global_max=Tr_max, &
+                            xgmin=Tr_min_x, ygmin=Tr_min_y, zgmin=Tr_min_z,&
+                            xgmax=Tr_max_x, ygmax=Tr_max_y, zgmax=Tr_max_z)
+  elseif (CS%write_min_max) then
+    call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
+                            stock_units=Tr_units, num_stocks=nTr_stocks,&
+                            got_min_max=Tr_minmax_avail, global_min=Tr_min, global_max=Tr_max)
+  else
+    call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
+                            stock_units=Tr_units, num_stocks=nTr_stocks)
+  endif
   if (nTr_stocks > 0) then
     do m=1,nTr_stocks
       vars(num_nc_fields+m) = var_desc(Tr_names(m), units=Tr_units(m), &
                     longname=Tr_names(m), hor_grid='1', z_grid='1')
     enddo
     num_nc_fields = num_nc_fields + nTr_stocks
+  endif
+
+  if (CS%use_temperature .and. CS%write_stocks) then
+    call array_global_min_max(tv%T, G, nz, T_min, T_max, &
+                              T_min_x, T_min_y, T_min_z, T_max_x, T_max_y, T_max_z, unscale=US%C_to_degC)
+    call array_global_min_max(tv%S, G, nz, S_min, S_max, &
+                              S_min_x, S_min_y, S_min_z, S_max_x, S_max_y, S_max_z, unscale=US%S_to_ppt)
   endif
 
   if (CS%previous_calls == 0) then
@@ -556,16 +623,31 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
         call open_ASCII_file(CS%fileenergy_ascii, trim(CS%energyfile), action=WRITEONLY_FILE)
         if (abs(CS%timeunit - 86400.0) < 1.0) then
           if (CS%use_temperature) then
-            write(CS%fileenergy_ascii,'("  Step,",7x,"Day,  Truncs,      &
-                &Energy/Mass,      Maximum CFL,  Mean Sea Level,  Total Mass,  Mean Salin, &
-                &Mean Temp, Frac Mass Err,   Salin Err,    Temp Err")')
-            write(CS%fileenergy_ascii,'(12x,"[days]",17x,"[m2 s-2]",11x,"[Nondim]",7x,"[m]",13x,&
-                &"[kg]",9x,"[PSU]",6x,"[degC]",7x,"[Nondim]",8x,"[PSU]",8x,"[degC]")')
+           if (date_ISO_stamped) then
+             write(CS%fileenergy_ascii,'("  Step,",5x,"Date,  Truncs,      &
+                 &Energy/Mass,      Maximum CFL,  Mean Sea Level,  Total Mass,  Mean Salin, &
+                 &Mean Temp, Frac Mass Err,   Salin Err,    Temp Err")')
+             write(CS%fileenergy_ascii,'(10x,"[ISO]",17x,"[m2 s-2]",11x,"[Nondim]",7x,"[m]",13x,&
+                 &"[kg]",9x,"[PSU]",6x,"[degC]",7x,"[Nondim]",8x,"[PSU]",8x,"[degC]")')
+           else
+             write(CS%fileenergy_ascii,'("  Step,",7x,"Day,  Truncs,      &
+                 &Energy/Mass,      Maximum CFL,  Mean Sea Level,  Total Mass,  Mean Salin, &
+                 &Mean Temp, Frac Mass Err,   Salin Err,    Temp Err")')
+             write(CS%fileenergy_ascii,'(12x,"[days]",17x,"[m2 s-2]",11x,"[Nondim]",7x,"[m]",13x,&
+                 &"[kg]",9x,"[PSU]",6x,"[degC]",7x,"[Nondim]",8x,"[PSU]",8x,"[degC]")')
+           endif
           else
-            write(CS%fileenergy_ascii,'("  Step,",7x,"Day,  Truncs,      &
+           if (date_ISO_stamped) then
+             write(CS%fileenergy_ascii,'("  Step,",5x,"Date,  Truncs,      &
                 &Energy/Mass,      Maximum CFL,  Mean sea level,   Total Mass,    Frac Mass Err")')
-            write(CS%fileenergy_ascii,'(12x,"[days]",17x,"[m2 s-2]",11x,"[Nondim]",8x,"[m]",13x,&
+             write(CS%fileenergy_ascii,'(10x,"[ISO]",17x,"[m2 s-2]",11x,"[Nondim]",8x,"[m]",13x,&
                 &"[kg]",11x,"[Nondim]")')
+           else
+             write(CS%fileenergy_ascii,'("  Step,",7x,"Day,  Truncs,      &
+                &Energy/Mass,      Maximum CFL,  Mean sea level,   Total Mass,    Frac Mass Err")')
+             write(CS%fileenergy_ascii,'(12x,"[days]",17x,"[m2 s-2]",11x,"[Nondim]",8x,"[m]",13x,&
+                &"[kg]",11x,"[Nondim]")')
+           endif
           endif
         else
           if ((CS%timeunit >= 0.99) .and. (CS%timeunit < 1.01)) then
@@ -581,17 +663,33 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
           endif
 
           if (CS%use_temperature) then
-            write(CS%fileenergy_ascii,'("  Step,",7x,"Time, Truncs,      &
-                &Energy/Mass,      Maximum CFL,  Mean Sea Level,  Total Mass,  Mean Salin, &
-                &Mean Temp, Frac Mass Err,   Salin Err,    Temp Err")')
-            write(CS%fileenergy_ascii,'(A25,10x,"[m2 s-2]",11x,"[Nondim]",7x,"[m]",13x,&
-                &"[kg]",9x,"[PSU]",6x,"[degC]",7x,"[Nondim]",8x,"[PSU]",6x,&
-                &"[degC]")') time_units
+           if (date_ISO_stamped) then
+             write(CS%fileenergy_ascii,'("  Step,",7x,"Time, Truncs,      &
+                 &Energy/Mass,      Maximum CFL,  Mean Sea Level,  Total Mass,  Mean Salin, &
+                 &Mean Temp, Frac Mass Err,   Salin Err,    Temp Err")')
+             write(CS%fileenergy_ascii,'(A25,10x,"[m2 s-2]",11x,"[Nondim]",7x,"[m]",13x,&
+                 &"[kg]",9x,"[PSU]",6x,"[degC]",7x,"[Nondim]",8x,"[PSU]",6x,&
+                 &"[degC]")') "                         "
+           else
+             write(CS%fileenergy_ascii,'("  Step,",7x,"Time, Truncs,      &
+                 &Energy/Mass,      Maximum CFL,  Mean Sea Level,  Total Mass,  Mean Salin, &
+                 &Mean Temp, Frac Mass Err,   Salin Err,    Temp Err")')
+             write(CS%fileenergy_ascii,'(A25,10x,"[m2 s-2]",11x,"[Nondim]",7x,"[m]",13x,&
+                 &"[kg]",9x,"[PSU]",6x,"[degC]",7x,"[Nondim]",8x,"[PSU]",6x,&
+                 &"[degC]")') time_units
+           endif
           else
+           if (date_ISO_stamped) then
+            write(CS%fileenergy_ascii,'("  Step,",7x,"Time, Truncs,      &
+                &Energy/Mass,      Maximum CFL,  Mean sea level,   Total Mass,    Frac Mass Err")')
+            write(CS%fileenergy_ascii,'(A25,10x,"[m2 s-2]",11x,"[Nondim]",8x,"[m]",13x,&
+                &"[kg]",11x,"[Nondim]")') "                         "
+           else
             write(CS%fileenergy_ascii,'("  Step,",7x,"Time, Truncs,      &
                 &Energy/Mass,      Maximum CFL,  Mean sea level,   Total Mass,    Frac Mass Err")')
             write(CS%fileenergy_ascii,'(A25,10x,"[m2 s-2]",11x,"[Nondim]",8x,"[m]",13x,&
                 &"[kg]",11x,"[Nondim]")') time_units
+           endif
           endif
         endif
       endif
@@ -683,7 +781,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   tmp1(:,:,:) = 0.0
   do k=1,nz ; do j=js,je ; do i=is,ie
     tmp1(i,j,k) = (0.25 * KE_scale_factor * (areaTm(i,j) * h(i,j,k))) * &
-            ((u(I-1,j,k)**2 + u(I,j,k)**2) + (v(i,J-1,k)**2 + v(i,J,k)**2))
+            (((u(I-1,j,k)**2) + (u(I,j,k)**2)) + ((v(i,J-1,k)**2) + (v(i,J,k)**2)))
   enddo ; enddo ; enddo
 
   KE_tot = reproducing_sum(tmp1, isr, ier, jsr, jer, sums=KE)
@@ -776,8 +874,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   En_mass = toten / mass_tot
 
   call get_time(day, start_of_day, num_days)
-  date_stamped = (CS%date_stamped_output .and. (get_calendar_type() /= NO_CALENDAR))
-  if (date_stamped) &
+  if (date_stamped .or. date_ISO_stamped) &
     call get_date(day, iyear, imonth, iday, ihour, iminute, isecond, itick)
   if (abs(CS%timeunit - 86400.0) < 1.0) then
     reday = REAL(num_days)+ (REAL(start_of_day)/86400.0)
@@ -796,8 +893,10 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   elseif (n < 100000000) then ; write(n_str, '(I8)')  n
   else                        ; write(n_str, '(I10)') n ; endif
 
-  if (date_stamped) then
+  if (date_stamped .or. date_ISO_stamped) then
     write(date_str,'("MOM Date",i7,2("/",i2.2)," ",i2.2,2(":",i2.2))') &
+       iyear, imonth, iday, ihour, iminute, isecond
+    write(date_str_ISO,'(i7.4,2(i2.2),"T",i2.2,2(i2.2))') &
        iyear, imonth, iday, ihour, iminute, isecond
   else
     date_str = trim(mesg_intro)//trim(day_str)
@@ -815,19 +914,37 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
     endif
 
     if (CS%use_temperature) then
-      write(CS%fileenergy_ascii,'(A,",",A,",", I6,", En ",ES22.16, &
+      if (date_ISO_stamped) then
+        write(CS%fileenergy_ascii,'(A,",",A,",", I6,", En ",ES22.16, &
+                               &", CFL ", F8.5, ", SL ",&
+                               &es11.4,", M ",ES11.5,", S",f8.4,", T",f8.4,&
+                               &", Me ",ES9.2,", Se ",ES9.2,", Te ",ES9.2)') &
+            trim(n_str), trim(date_str_ISO), CS%ntrunc, En_mass, max_CFL(1), &
+            -H_0APE(1), mass_tot, salin, temp, mass_anom/mass_tot, salin_anom, &
+            temp_anom
+      else
+        write(CS%fileenergy_ascii,'(A,",",A,",", I6,", En ",ES22.16, &
                                &", CFL ", F8.5, ", SL ",&
                                &es11.4,", M ",ES11.5,", S",f8.4,", T",f8.4,&
                                &", Me ",ES9.2,", Se ",ES9.2,", Te ",ES9.2)') &
             trim(n_str), trim(day_str), CS%ntrunc, En_mass, max_CFL(1), &
             -H_0APE(1), mass_tot, salin, temp, mass_anom/mass_tot, salin_anom, &
             temp_anom
+      endif
     else
-      write(CS%fileenergy_ascii,'(A,",",A,",", I6,", En ",ES22.16, &
+      if (date_ISO_stamped) then
+        write(CS%fileenergy_ascii,'(A,",",A,",", I6,", En ",ES22.16, &
+                                &", CFL ", F8.5, ", SL ",&
+                                  &ES11.4,", Mass ",ES11.5,", Me ",ES9.2)') &
+            trim(n_str), trim(date_str_ISO), CS%ntrunc, En_mass, max_CFL(1), &
+            -H_0APE(1), mass_tot, mass_anom/mass_tot
+      else
+        write(CS%fileenergy_ascii,'(A,",",A,",", I6,", En ",ES22.16, &
                                 &", CFL ", F8.5, ", SL ",&
                                   &ES11.4,", Mass ",ES11.5,", Me ",ES9.2)') &
             trim(n_str), trim(day_str), CS%ntrunc, En_mass, max_CFL(1), &
             -H_0APE(1), mass_tot, mass_anom/mass_tot
+      endif
     endif
 
     if (CS%ntrunc > 0) then
@@ -847,6 +964,15 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
           write(stdout,'("    Total Salt: ",ES24.16,", Change: ",ES24.16," Error: ",ES12.5," (",ES8.1,")")') &
               Salt*0.001, Salt_chg*0.001, Salt_anom*0.001, Salt_anom/Salt
         endif
+        if (CS%write_min_max .and. CS%write_min_max_loc) then
+          write(stdout,'(16X,"Salinity Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                S_min, S_min_x, S_min_y, S_min_z
+          write(stdout,'(16X,"Salinity Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                S_max, S_max_x, S_max_y, S_max_z
+        elseif (CS%write_min_max) then
+          write(stdout,'(16X,"Salinity Global Min & Max:",ES24.16,1X,ES24.16)') S_min, S_max
+        endif
+
         if (Heat == 0.) then
           write(stdout,'("    Total Heat: ",ES24.16,", Change: ",ES24.16," Error: ",ES12.5)') &
               Heat, Heat_chg, Heat_anom
@@ -854,17 +980,28 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
           write(stdout,'("    Total Heat: ",ES24.16,", Change: ",ES24.16," Error: ",ES12.5," (",ES8.1,")")') &
               Heat, Heat_chg, Heat_anom, Heat_anom/Heat
         endif
+        if (CS%write_min_max .and. CS%write_min_max_loc) then
+          write(stdout,'(16X,"Temperature Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                T_min, T_min_x, T_min_y, T_min_z
+          write(stdout,'(16X,"Temperature Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                T_max, T_max_x, T_max_y, T_max_z
+        elseif (CS%write_min_max) then
+          write(stdout,'(16X,"Temperature Global Min & Max:",ES24.16,1X,ES24.16)') T_min, T_max
+        endif
       endif
       do m=1,nTr_stocks
 
-         write(stdout,'("      Total ",a,": ",ES24.16,1X,a)') &
+        write(stdout,'("      Total ",a,": ",ES24.16,1X,a)') &
               trim(Tr_names(m)), Tr_stocks(m), trim(Tr_units(m))
 
-         if (Tr_minmax_avail(m)) then
-           write(stdout,'(64X,"Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
-                Tr_min(m),Tr_min_x(m),Tr_min_y(m),Tr_min_z(m)
-           write(stdout,'(64X,"Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
-                Tr_max(m),Tr_max_x(m),Tr_max_y(m),Tr_max_z(m)
+        if (CS%write_min_max .and. CS%write_min_max_loc .and. Tr_minmax_avail(m)) then
+          write(stdout,'(18X,a," Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+               trim(Tr_names(m)), Tr_min(m), Tr_min_x(m), Tr_min_y(m), Tr_min_z(m)
+          write(stdout,'(18X,a," Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+               trim(Tr_names(m)), Tr_max(m), Tr_max_x(m), Tr_max_y(m), Tr_max_z(m)
+        elseif (CS%write_min_max .and. Tr_minmax_avail(m)) then
+          write(stdout,'(18X,a," Global Min & Max:",ES24.16,1X,ES24.16)') &
+               trim(Tr_names(m)), Tr_min(m), Tr_max(m)
         endif
 
       enddo
@@ -966,8 +1103,8 @@ subroutine accumulate_net_input(fluxes, sfc_state, tv, dt, G, US, CS)
     if (associated(fluxes%lprec) .and. associated(fluxes%fprec)) then
       do j=js,je ; do i=is,ie
         FW_in(i,j) = RZL2_to_kg * dt*G%areaT(i,j)*(fluxes%evap(i,j) + &
-            (((fluxes%lprec(i,j) + fluxes%vprec(i,j)) + fluxes%lrunoff(i,j)) + &
-              (fluxes%fprec(i,j) + fluxes%frunoff(i,j))))
+            (((fluxes%lprec(i,j) + fluxes%vprec(i,j)) + (fluxes%lrunoff(i,j) + fluxes%lrunoff_glc(i,j))) + &
+              (fluxes%fprec(i,j) + (fluxes%frunoff(i,j) + fluxes%frunoff_glc(i,j)))))
       enddo ; enddo
     else
       call MOM_error(WARNING, &

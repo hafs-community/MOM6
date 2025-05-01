@@ -31,12 +31,12 @@ subroutine P1M_interpolation( N, h, u, edge_values, ppoly_coef, h_neglect, answe
   real, dimension(:,:), intent(inout) :: edge_values !< Potentially modified edge values [A]
   real, dimension(:,:), intent(inout) :: ppoly_coef !< Potentially modified
                                            !! piecewise polynomial coefficients, mainly [A]
-  real,       optional, intent(in)    :: h_neglect !< A negligibly small width [H]
+  real,                 intent(in)    :: h_neglect !< A negligibly small width [H]
   integer,    optional, intent(in)    :: answer_date  !< The vintage of the expressions to use
 
   ! Local variables
   integer   :: k            ! loop index
-  real      :: u0_l, u0_r   ! edge values (left and right)
+  real      :: u0_l, u0_r   ! edge values (left and right) [A]
 
   ! Bound edge values (routine found in 'edge_values.F90')
   call bound_edge_values( N, h, u, edge_values, h_neglect, answer_date=answer_date )
@@ -74,10 +74,10 @@ subroutine P1M_boundary_extrapolation( N, h, u, edge_values, ppoly_coef )
   real, dimension(:,:), intent(inout) :: ppoly_coef !< coefficients of piecewise polynomials, mainly [A]
 
   ! Local variables
-  real          :: u0, u1               ! cell averages
-  real          :: h0, h1               ! corresponding cell widths
-  real          :: slope                ! retained PLM slope
-  real          :: u0_l, u0_r           ! edge values
+  real          :: u0, u1               ! cell averages [A]
+  real          :: h0, h1               ! corresponding cell widths [H]
+  real          :: slope                ! retained PLM slope [A]
+  real          :: u0_l, u0_r           ! edge values [A]
 
   ! -----------------------------------------
   ! Left edge value in the left boundary cell

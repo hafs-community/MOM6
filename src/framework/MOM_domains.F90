@@ -65,7 +65,7 @@ contains
 !! properties of the domain type.
 subroutine MOM_domains_init(MOM_dom, param_file, symmetric, static_memory, &
                             NIHALO, NJHALO, NIGLOBAL, NJGLOBAL, NIPROC, NJPROC, &
-                            min_halo, domain_name, include_name, param_suffix, US)
+                            min_halo, domain_name, include_name, param_suffix, US, MOM_dom_unmasked)
   type(MOM_domain_type),           pointer       :: MOM_dom      !< A pointer to the MOM_domain_type
                                                                  !! being defined here.
   type(param_file_type),           intent(in)    :: param_file   !< A structure to parse for
@@ -99,10 +99,13 @@ subroutine MOM_domains_init(MOM_dom, param_file, symmetric, static_memory, &
   character(len=*),      optional, intent(in)    :: param_suffix !< A suffix to apply to
                                                                  !! layout-specific parameters.
   type(unit_scale_type), optional, pointer       :: US           !< A dimensional unit scaling type
+  type(MOM_domain_type), optional, pointer       :: MOM_dom_unmasked !< Unmasked MOM domain instance.
+                                                                 !! Set to null if masking is not enabled.
 
   ! Local variables
   integer, dimension(2) :: layout    ! The number of logical processors in the i- and j- directions
   integer, dimension(2) :: auto_layout ! The layout determined by the auto masking routine
+  integer, dimension(2) :: layout_unmasked ! A temporary layout for unmasked domain
   integer, dimension(2) :: io_layout ! The layout of logical processors for input and output
   !$ integer :: ocean_nthreads       ! Number of openMP threads
   !$ logical :: ocean_omp_hyper_thread ! If true use openMP hyper-threads
@@ -439,6 +442,14 @@ subroutine MOM_domains_init(MOM_dom, param_file, symmetric, static_memory, &
                    "to be the same as the layout.", default=1, layoutParam=.true.)
   endif
 
+  ! Create an unmasked domain if requested. This is used for writing out unmasked ocean geometry.
+  if (present(MOM_dom_unmasked) .and. mask_table_exists) then
+    call MOM_define_layout(n_global, PEs_used, layout_unmasked)
+    call create_MOM_domain(MOM_dom_unmasked, n_global, n_halo, reentrant, tripolar_N, layout_unmasked, &
+                           domain_name=domain_name, symmetric=symmetric, thin_halos=thin_halos, &
+                           nonblocking=nonblocking)
+  endif
+
   call create_MOM_domain(MOM_dom, n_global, n_halo, reentrant, tripolar_N, layout, &
                          io_layout=io_layout, domain_name=domain_name, mask_table=mask_table, &
                          symmetric=symmetric, thin_halos=thin_halos, nonblocking=nonblocking)
@@ -680,10 +691,10 @@ subroutine write_auto_mask_file(mask_table, layout, npes, filename)
   true_num_masked_blocks = layout(1) * layout(2) - npes
 
   call open_ASCII_file(file_ascii, trim(filename), action=WRITEONLY_FILE)
-  write(file_ascii, '(I0)'), true_num_masked_blocks
-  write(file_ascii, '(I0,",",I0)'), layout(1), layout(2)
+  write(file_ascii, '(I0)') true_num_masked_blocks
+  write(file_ascii, '(I0,",",I0)') layout(1), layout(2)
   do p = 1, true_num_masked_blocks
-    write(file_ascii, '(I0,",",I0)'), mask_table(p,1), mask_table(p,2)
+    write(file_ascii, '(I0,",",I0)') mask_table(p,1), mask_table(p,2)
   enddo
   call close_file(file_ascii)
 end subroutine write_auto_mask_file

@@ -235,7 +235,7 @@ subroutine set_coord_from_TS_ref(Rlay, g_prime, GV, US, param_file, eqn_of_state
                  "The initial temperature of the lightest layer.", &
                  units="degC", scale=US%degC_to_C, fail_if_missing=.true.)
   call get_param(param_file, mdl, "S_REF", S_ref, &
-                 "The initial salinities.", units="PSU", default=35.0, scale=US%ppt_to_S)
+                 "The initial salinities.", units="ppt", default=35.0, scale=US%ppt_to_S)
   call get_param(param_file, mdl, "GFS", g_fs, &
                  "The reduced gravity at the free surface.", units="m s-2", &
                  default=GV%g_Earth*US%L_T_to_m_s**2*US%m_to_Z, scale=US%m_s_to_L_T**2*US%Z_to_m)
@@ -376,13 +376,13 @@ subroutine set_coord_from_TS_range(Rlay, g_prime, GV, US, param_file, eqn_of_sta
 
   call get_param(param_file, mdl, "S_REF", S_Ref, &
                  "The default initial salinities.", &
-                 units="PSU", default=35.0, scale=US%ppt_to_S)
+                 units="ppt", default=35.0, scale=US%ppt_to_S)
   call get_param(param_file, mdl, "TS_RANGE_S_LIGHT", S_Light, &
                  "The initial lightest salinities when COORD_CONFIG is set to ts_range.", &
-                 units="PSU", default=US%S_to_ppt*S_Ref, scale=US%ppt_to_S)
+                 units="ppt", default=US%S_to_ppt*S_Ref, scale=US%ppt_to_S)
   call get_param(param_file, mdl, "TS_RANGE_S_DENSE", S_Dense, &
                  "The initial densest salinities when COORD_CONFIG is set to ts_range.", &
-                 units="PSU", default=US%S_to_ppt*S_Ref, scale=US%ppt_to_S)
+                 units="ppt", default=US%S_to_ppt*S_Ref, scale=US%ppt_to_S)
 
   call get_param(param_file, mdl, "TS_RANGE_RESOLN_RATIO", res_rat, &
                  "The ratio of density space resolution in the densest "//&
@@ -600,8 +600,8 @@ subroutine write_vertgrid_file(GV, US, param_file, directory)
   call create_MOM_file(IO_handle, trim(filepath), vars, 2, fields, &
       SINGLE_FILE, GV=GV)
 
-  call MOM_write_field(IO_handle, fields(1), GV%Rlay, scale=US%R_to_kg_m3)
-  call MOM_write_field(IO_handle, fields(2), GV%g_prime, scale=US%L_T_to_m_s**2*US%m_to_Z)
+  call MOM_write_field(IO_handle, fields(1), GV%Rlay, unscale=US%R_to_kg_m3)
+  call MOM_write_field(IO_handle, fields(2), GV%g_prime, unscale=US%L_T_to_m_s**2*US%m_to_Z)
 
   call IO_handle%close()
 

@@ -40,7 +40,7 @@ use MOM_remapping,        only : initialize_remapping, end_remapping
 use MOM_remapping,        only : remapping_core_h, remapping_core_w
 use MOM_remapping,        only : remappingSchemesDoc, remappingDefaultScheme
 use MOM_remapping,        only : interpolate_column, reintegrate_column
-use MOM_remapping,        only : remapping_CS, dzFromH1H2
+use MOM_remapping,        only : remapping_CS, dzFromH1H2, remapping_set_param
 use MOM_string_functions, only : uppercase, extractWord, extract_integer
 use MOM_tracer_registry,  only : tracer_registry_type, tracer_type, MOM_tracer_chkinv
 use MOM_unit_scaling,     only : unit_scale_type
@@ -97,6 +97,9 @@ type, public :: ALE_CS ; private
                             !! values result in the use of more robust and accurate forms of
                             !! mathematically equivalent expressions.
 
+  logical :: conserve_ke    !< Apply a correction to the baroclinic velocity after remapping to
+                            !! conserve KE.
+
   logical :: debug   !< If true, write verbose checksums for debugging purposes.
   logical :: show_call_tree !< For debugging
 
@@ -117,6 +120,8 @@ type, public :: ALE_CS ; private
   integer :: id_e_preale = -1 !< diagnostic id for interface heights before ALE.
   integer :: id_vert_remap_h = -1      !< diagnostic id for layer thicknesses used for remapping
   integer :: id_vert_remap_h_tendency = -1 !< diagnostic id for layer thickness tendency due to ALE
+  integer :: id_remap_delta_integ_u2 = -1  !< Change in depth-integrated rho0*u**2/2
+  integer :: id_remap_delta_integ_v2 = -1  !< Change in depth-integrated rho0*v**2/2
 
 end type
 
@@ -147,6 +152,7 @@ public pre_ALE_diagnostics
 public pre_ALE_adjustments
 public ALE_remap_init_conds
 public ALE_register_diags
+public ALE_set_extrap_boundaries
 
 ! A note on unit descriptions in comments: MOM6 uses units that can be rescaled for dimensional
 ! consistency testing. These are noted in comments with units like Z, H, L, and T, along with
@@ -176,8 +182,11 @@ subroutine ALE_init( param_file, GV, US, max_depth, CS)
   logical           :: force_bounds_in_subcell
   logical           :: local_logical
   logical           :: remap_boundary_extrap
+  logical           :: init_boundary_extrap
+  logical           :: om4_remap_via_sub_cells
   type(hybgen_regrid_CS), pointer :: hybgen_regridCS => NULL() ! Control structure for hybgen regridding
                                                          ! for sharing parameters.
+  real :: h_neglect, h_neglect_edge ! small thicknesses [H ~> m or kg m-2]
 
   if (associated(CS)) then
     call MOM_error(WARNING, "ALE_init called with an associated "// &
@@ -225,9 +234,18 @@ subroutine ALE_init( param_file, GV, US, max_depth, CS)
   call get_param(param_file, mdl, "REMAP_BOUNDARY_EXTRAP", remap_boundary_extrap, &
                  "If true, values at the interfaces of boundary cells are "//&
                  "extrapolated instead of piecewise constant", default=.false.)
+  call get_param(param_file, mdl, "INIT_BOUNDARY_EXTRAP", init_boundary_extrap, &
+                 "If true, values at the interfaces of boundary cells are "//&
+                 "extrapolated instead of piecewise constant during initialization."//&
+                 "Defaults to REMAP_BOUNDARY_EXTRAP.", default=remap_boundary_extrap)
   call get_param(param_file, mdl, "DEFAULT_ANSWER_DATE", default_answer_date, &
                  "This sets the default value for the various _ANSWER_DATE parameters.", &
                  default=99991231)
+  call get_param(param_file, mdl, "REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 "This selects the remapping algorithm used in OM4 that does not use "//&
+                 "the full reconstruction for the top- and lower-most sub-layers, but instead "//&
+                 "assumes they are always vanished (untrue) and so just uses their edge values. "//&
+                 "We recommend setting this option to false.", default=.true.)
   call get_param(param_file, mdl, "REMAPPING_ANSWER_DATE", CS%answer_date, &
                  "The vintage of the expressions and order of arithmetic to use for remapping.  "//&
                  "Values below 20190101 result in the use of older, less accurate expressions "//&
@@ -236,18 +254,30 @@ subroutine ALE_init( param_file, GV, US, max_depth, CS)
                  default=default_answer_date, do_not_log=.not.GV%Boussinesq)
   if (.not.GV%Boussinesq) CS%answer_date = max(CS%answer_date, 20230701)
 
+  if (CS%answer_date >= 20190101) then
+    h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
+  elseif (GV%Boussinesq) then
+    h_neglect = GV%m_to_H * 1.0e-30 ; h_neglect_edge = GV%m_to_H * 1.0e-10
+  else
+    h_neglect = GV%kg_m2_to_H * 1.0e-30 ; h_neglect_edge = GV%kg_m2_to_H * 1.0e-10
+  endif
+
   call initialize_remapping( CS%remapCS, string, &
-                             boundary_extrapolation=remap_boundary_extrap, &
+                             boundary_extrapolation=init_boundary_extrap, &
                              check_reconstruction=check_reconstruction, &
                              check_remapping=check_remapping, &
                              force_bounds_in_subcell=force_bounds_in_subcell, &
-                             answer_date=CS%answer_date)
+                             om4_remap_via_sub_cells=om4_remap_via_sub_cells, &
+                             answer_date=CS%answer_date, &
+                             h_neglect=h_neglect, h_neglect_edge=h_neglect_edge)
   call initialize_remapping( CS%vel_remapCS, vel_string, &
-                             boundary_extrapolation=remap_boundary_extrap, &
+                             boundary_extrapolation=init_boundary_extrap, &
                              check_reconstruction=check_reconstruction, &
                              check_remapping=check_remapping, &
                              force_bounds_in_subcell=force_bounds_in_subcell, &
-                             answer_date=CS%answer_date)
+                             om4_remap_via_sub_cells=om4_remap_via_sub_cells, &
+                             answer_date=CS%answer_date, &
+                             h_neglect=h_neglect, h_neglect_edge=h_neglect_edge)
 
   call get_param(param_file, mdl, "PARTIAL_CELL_VELOCITY_REMAP", CS%partial_cell_vel_remap, &
                  "If true, use partial cell thicknesses at velocity points that are masked out "//&
@@ -298,6 +328,11 @@ subroutine ALE_init( param_file, GV, US, max_depth, CS)
   if (CS%use_hybgen_unmix) &
     call init_hybgen_unmix(CS%hybgen_unmixCS, GV, US, param_file, hybgen_regridCS)
 
+  call get_param(param_file, mdl, "REMAP_VEL_CONSERVE_KE", CS%conserve_ke, &
+                 "If true, a correction is applied to the baroclinic component of velocity "//&
+                 "after remapping so that total KE is conserved. KE may not be conserved "//&
+                 "when (CS%BBL_h_vel_mask > 0.0) .and. (CS%h_vel_mask > 0.0)", &
+                 default=.false.)
   call get_param(param_file, "MOM", "DEBUG", CS%debug, &
                  "If true, write out verbose debugging data.", &
                  default=.false., debuggingParam=.true.)
@@ -307,6 +342,33 @@ subroutine ALE_init( param_file, GV, US, max_depth, CS)
 
   if (CS%show_call_tree) call callTree_leave("ALE_init()")
 end subroutine ALE_init
+
+!> Sets the boundary extrapolation set for the remapping type.
+subroutine ALE_set_extrap_boundaries( param_file, CS)
+  type(param_file_type),   intent(in) :: param_file !< Parameter file
+  type(ALE_CS),            pointer    :: CS         !< Module control structure
+
+  logical :: remap_boundary_extrap
+  call get_param(param_file, "MOM_ALE", "REMAP_BOUNDARY_EXTRAP", remap_boundary_extrap, &
+                 "If true, values at the interfaces of boundary cells are "//&
+                 "extrapolated instead of piecewise constant", default=.false.)
+  call remapping_set_param(CS%remapCS, boundary_extrapolation=remap_boundary_extrap)
+end subroutine ALE_set_extrap_boundaries
+
+!> Sets the remapping algorithm to that of OM4
+!!
+!! The remapping aglorithm used in OM4 made poor assumptions about the reconstructions
+!! in the top/bottom layers, namely that they were always vanished and could be
+!! represented solely by their upper/lower edge value respectively.
+!! Passing .false. here uses the full reconstruction of those top and bottom layers
+!! and properly sample those layers.
+subroutine ALE_set_OM4_remap_algorithm( CS, om4_remap_via_sub_cells )
+  type(ALE_CS), pointer :: CS !< Module control structure
+  logical, intent(in)   :: om4_remap_via_sub_cells !< If true, use OM4 remapping algorithm
+
+  call remapping_set_param(CS%remapCS, om4_remap_via_sub_cells=om4_remap_via_sub_cells )
+
+end subroutine ALE_set_OM4_remap_algorithm
 
 !> Initialize diagnostics for the ALE module.
 subroutine ALE_register_diags(Time, G, GV, US, diag, CS)
@@ -341,13 +403,23 @@ subroutine ALE_register_diags(Time, G, GV, US, diag, CS)
 
   CS%id_dzRegrid = register_diag_field('ocean_model', 'dzRegrid', diag%axesTi, Time, &
       'Change in interface height due to ALE regridding', 'm', conversion=GV%H_to_m)
-  cs%id_vert_remap_h = register_diag_field('ocean_model', 'vert_remap_h', diag%axestl, Time, &
+  CS%id_vert_remap_h = register_diag_field('ocean_model', 'vert_remap_h', diag%axestl, Time, &
       'layer thicknesses after ALE regridding and remapping', &
       thickness_units, conversion=GV%H_to_MKS, v_extensive=.true.)
-  cs%id_vert_remap_h_tendency = register_diag_field('ocean_model', &
+  CS%id_vert_remap_h_tendency = register_diag_field('ocean_model', &
       'vert_remap_h_tendency', diag%axestl, Time, &
       'Layer thicknesses tendency due to ALE regridding and remapping', &
       trim(thickness_units)//" s-1", conversion=GV%H_to_MKS*US%s_to_T, v_extensive=.true.)
+  CS%id_remap_delta_integ_u2 = register_diag_field('ocean_model', 'ale_u2', diag%axesCu1, Time, &
+      'Rate of change in half rho0 times depth integral of squared zonal'//&
+      ' velocity by remapping. If REMAP_VEL_CONSERVE_KE is .true. then '//&
+      ' this measures the change before the KE-conserving correction is applied.', &
+      'W m-2', conversion=GV%H_to_kg_m2 * US%L_T_to_m_s**2 * US%s_to_T)
+  CS%id_remap_delta_integ_v2 = register_diag_field('ocean_model', 'ale_v2', diag%axesCv1, Time, &
+      'Rate of change in half rho0 times depth integral of squared meridional'//&
+      ' velocity by remapping. If REMAP_VEL_CONSERVE_KE is .true. then '//&
+      ' this measures the change before the KE-conserving correction is applied.', &
+      'W m-2', conversion=GV%H_to_kg_m2 * US%L_T_to_m_s**2 * US%s_to_T)
 
 end subroutine ALE_register_diags
 
@@ -550,8 +622,8 @@ subroutine ALE_offline_inputs(CS, G, GV, US, h, tv, Reg, uhtr, vhtr, Kd, debug, 
     endif
   enddo ; enddo
 
-  call ALE_remap_scalar(CS%remapCS, G, GV, nk, h, tv%T, h_new, tv%T, answer_date=CS%answer_date)
-  call ALE_remap_scalar(CS%remapCS, G, GV, nk, h, tv%S, h_new, tv%S, answer_date=CS%answer_date)
+  call ALE_remap_scalar(CS%remapCS, G, GV, nk, h, tv%T, h_new, tv%T)
+  call ALE_remap_scalar(CS%remapCS, G, GV, nk, h, tv%S, h_new, tv%S)
 
   if (debug) call MOM_tracer_chkinv("After ALE_offline_inputs", G, GV, h_new, Reg%Tr, Reg%ntr)
 
@@ -612,7 +684,6 @@ subroutine ALE_regrid_accelerated(CS, G, GV, US, h, tv, n_itt, u, v, OBC, Reg, d
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: dzInterface ! Interface height changes within
                                                              ! an iteration [H ~> m or kg m-2]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: dzIntTotal  ! Cumulative interface position changes [H ~> m or kg m-2]
-  real :: h_neglect, h_neglect_edge ! small thicknesses [H ~> m or kg m-2]
 
   nz = GV%ke
 
@@ -639,14 +710,6 @@ subroutine ALE_regrid_accelerated(CS, G, GV, US, h, tv, n_itt, u, v, OBC, Reg, d
   if (present(dt)) &
     call ALE_update_regrid_weights(dt, CS)
 
-  if (CS%answer_date >= 20190101) then
-    h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
-  elseif (GV%Boussinesq) then
-    h_neglect = GV%m_to_H * 1.0e-30 ; h_neglect_edge = GV%m_to_H * 1.0e-10
-  else
-    h_neglect = GV%kg_m2_to_H * 1.0e-30 ; h_neglect_edge = GV%kg_m2_to_H * 1.0e-10
-  endif
-
   do itt = 1, n_itt
 
     call do_group_pass(pass_T_S_h, G%domain)
@@ -663,10 +726,8 @@ subroutine ALE_regrid_accelerated(CS, G, GV, US, h, tv, n_itt, u, v, OBC, Reg, d
 
     ! remap from original grid onto new grid
     do j = G%jsc-1,G%jec+1 ; do i = G%isc-1,G%iec+1
-      call remapping_core_h(CS%remapCS, nz, h_orig(i,j,:), tv%S(i,j,:), nz, h(i,j,:), tv_local%S(i,j,:), &
-                            h_neglect, h_neglect_edge)
-      call remapping_core_h(CS%remapCS, nz, h_orig(i,j,:), tv%T(i,j,:), nz, h(i,j,:), tv_local%T(i,j,:), &
-                            h_neglect, h_neglect_edge)
+      call remapping_core_h(CS%remapCS, nz, h_orig(i,j,:), tv%S(i,j,:), nz, h(i,j,:), tv_local%S(i,j,:))
+      call remapping_core_h(CS%remapCS, nz, h_orig(i,j,:), tv%T(i,j,:), nz, h(i,j,:), tv_local%T(i,j,:))
     enddo ; enddo
 
     ! starting grid for next iteration
@@ -722,21 +783,12 @@ subroutine ALE_remap_tracers(CS, G, GV, h_old, h_new, Reg, debug, dt, PCM_cell)
   real :: Idt           ! The inverse of the timestep [T-1 ~> s-1]
   real :: h1(GV%ke)     ! A column of source grid layer thicknesses [H ~> m or kg m-2]
   real :: h2(GV%ke)     ! A column of target grid layer thicknesses [H ~> m or kg m-2]
-  real :: h_neglect, h_neglect_edge  ! Tiny thicknesses used in remapping [H ~> m or kg m-2]
   logical :: show_call_tree
   type(tracer_type), pointer :: Tr => NULL()
   integer :: i, j, k, m, nz, ntr
 
   show_call_tree = .false.
   if (present(debug)) show_call_tree = debug
-
-  if (CS%answer_date >= 20190101) then
-    h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
-  elseif (GV%Boussinesq) then
-    h_neglect = GV%m_to_H*1.0e-30 ; h_neglect_edge = GV%m_to_H*1.0e-10
-  else
-    h_neglect = GV%kg_m2_to_H*1.0e-30 ; h_neglect_edge = GV%kg_m2_to_H*1.0e-10
-  endif
 
   if (show_call_tree) call callTree_enter("ALE_remap_tracers(), MOM_ALE.F90")
 
@@ -762,11 +814,9 @@ subroutine ALE_remap_tracers(CS, G, GV, h_old, h_new, Reg, debug, dt, PCM_cell)
         h2(:) = h_new(i,j,:)
         if (present(PCM_cell)) then
           PCM(:) = PCM_cell(i,j,:)
-          call remapping_core_h(CS%remapCS, nz, h1, Tr%t(i,j,:), nz, h2, tr_column, &
-                                h_neglect, h_neglect_edge, PCM_cell=PCM)
+          call remapping_core_h(CS%remapCS, nz, h1, Tr%t(i,j,:), nz, h2, tr_column, PCM_cell=PCM)
         else
-          call remapping_core_h(CS%remapCS, nz, h1, Tr%t(i,j,:), nz, h2, tr_column, &
-                                h_neglect, h_neglect_edge)
+          call remapping_core_h(CS%remapCS, nz, h1, Tr%t(i,j,:), nz, h2, tr_column)
         endif
 
         ! Possibly underflow any very tiny tracer concentrations to 0.  Note that this is not conservative!
@@ -1020,7 +1070,8 @@ end subroutine ALE_remap_set_h_vel_OBC
 !! This routine may be called during initialization of the model at time=0, to
 !! remap initial conditions to the model grid.  It is also called during a
 !! time step to update the state.
-subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u, v, debug)
+subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u, v, debug, &
+                                dt, allow_preserve_variance)
   type(ALE_CS),                              intent(in)    :: CS        !< ALE control structure
   type(ocean_grid_type),                     intent(in)    :: G         !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)    :: GV        !< Ocean vertical grid structure
@@ -1041,6 +1092,9 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), &
                                              intent(inout) :: v         !< Meridional velocity [L T-1 ~> m s-1]
   logical,                         optional, intent(in)    :: debug     !< If true, show the call tree
+  real,                            optional, intent(in)    :: dt        !< time step for diagnostics [T ~> s]
+  logical,                         optional, intent(in)    :: allow_preserve_variance !< If true, enables ke-conserving
+                                                                                      !! correction
 
   ! Local variables
   real :: h_mask_vel ! A depth below which the thicknesses at a velocity point are masked out [H ~> m or kg m-2]
@@ -1050,7 +1104,16 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
   real :: v_tgt(GV%ke)  ! A column of v-velocities on the target grid [L T-1 ~> m s-1]
   real :: h1(GV%ke)     ! A column of source grid layer thicknesses [H ~> m or kg m-2]
   real :: h2(GV%ke)     ! A column of target grid layer thicknesses [H ~> m or kg m-2]
-  real :: h_neglect, h_neglect_edge  ! Tiny thicknesses used in remapping [H ~> m or kg m-2]
+  real :: rescale_coef  ! Factor that scales the baroclinic velocity to conserve ke [nondim]
+  real :: u_bt, v_bt    ! Depth-averaged velocity components [L T-1 ~> m s-1]
+  real :: ke_c_src, ke_c_tgt ! \int [u_c or v_c]^2 dz on src and tgt grids [H L2 T-2 ~> m3 s-2]
+  real, dimension(SZIB_(G),SZJ_(G)) :: du2h_tot  ! The rate of change of vertically integrated
+                                                 ! 0.5 * rho0 *  u**2 [R Z L2 T-3 ~> W m-2]
+  real, dimension(SZI_(G),SZJB_(G)) :: dv2h_tot  ! The rate of change of vertically integrated
+                                                 ! 0.5 * rho0 *  v**2 [R Z L2 T-3 ~> W m-2]
+  real :: u2h_tot, v2h_tot   ! The vertically integrated u**2 and v**2 [H L2 T-2 ~> m3 s-2 or kg s-2]
+  real :: I_dt               ! 1 / dt [T-1 ~> s-1]
+  logical :: variance_option ! Contains the value of allow_preserve_variance when present, else false
   logical :: show_call_tree
   integer :: i, j, k, nz
 
@@ -1058,19 +1121,24 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
   if (present(debug)) show_call_tree = debug
   if (show_call_tree) call callTree_enter("ALE_remap_velocities()")
 
-  if (CS%answer_date >= 20190101) then
-    h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
-  elseif (GV%Boussinesq) then
-    h_neglect = GV%m_to_H*1.0e-30 ; h_neglect_edge = GV%m_to_H*1.0e-10
-  else
-    h_neglect = GV%kg_m2_to_H*1.0e-30 ; h_neglect_edge = GV%kg_m2_to_H*1.0e-10
-  endif
+  ! Setup related to KE conservation
+  variance_option = .false.
+  if (present(allow_preserve_variance)) variance_option=allow_preserve_variance
+  if (present(dt)) I_dt = 1.0 / dt
+
+  if (CS%id_remap_delta_integ_u2>0) du2h_tot(:,:) = 0.
+  if (CS%id_remap_delta_integ_v2>0) dv2h_tot(:,:) = 0.
+
+  if (((CS%id_remap_delta_integ_u2>0) .or. (CS%id_remap_delta_integ_v2>0)) .and. .not.present(dt))&
+    call MOM_error(FATAL, "ALE KE diagnostics requires passing dt into ALE_remap_velocities")
 
   nz = GV%ke
 
   ! --- Remap u profiles from the source vertical grid onto the new target grid.
 
-  !$OMP parallel do default(shared) private(h1,h2,u_src,h_mask_vel,u_tgt)
+  !$OMP parallel do default(shared) private(h1,h2,u_src,h_mask_vel,u_tgt, &
+  !$OMP                                     u_bt,ke_c_src,ke_c_tgt,rescale_coef, &
+  !$OMP                                     u2h_tot,v2h_tot)
   do j=G%jsc,G%jec ; do I=G%IscB,G%IecB ; if (G%mask2dCu(I,j)>0.) then
     ! Make a 1-d copy of the start and final grids and the source velocity
     do k=1,nz
@@ -1079,8 +1147,53 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
       u_src(k) = u(I,j,k)
     enddo
 
-    call remapping_core_h(CS%vel_remapCS, nz, h1, u_src, nz, h2, u_tgt, &
-                          h_neglect, h_neglect_edge)
+    if (CS%id_remap_delta_integ_u2>0) then
+      u2h_tot = 0.
+      do k=1,nz
+        u2h_tot = u2h_tot - h1(k) * (u_src(k)**2)
+      enddo
+    endif
+
+    call remapping_core_h(CS%vel_remapCS, nz, h1, u_src, nz, h2, u_tgt)
+
+    if (variance_option .and. CS%conserve_ke) then
+    ! Conserve ke_u by correcting baroclinic component.
+    ! Assumes total depth doesn't change during remap, and
+    ! that \int u(z) dz doesn't change during remap.
+      ! First get barotropic component
+      u_bt = 0.0
+      do k=1,nz
+        u_bt = u_bt + h2(k) * u_tgt(k) ! Dimensions [H L T-1]
+      enddo
+      u_bt = u_bt / (sum(h2(1:nz)) + GV%H_subroundoff) ! Dimensions return to [L T-1]
+      ! Next get baroclinic ke = \int (u-u_bt)^2 from source and target
+      ke_c_src = 0.0
+      ke_c_tgt = 0.0
+      do k=1,nz
+        ke_c_src = ke_c_src + h1(k) * (u_src(k) - u_bt)**2
+        ke_c_tgt = ke_c_tgt + h2(k) * (u_tgt(k) - u_bt)**2
+      enddo
+      ! Next rescale baroclinic component on target grid to conserve ke
+      ! The values 1.5625 = 1.25**2 and 1.25 below mean that the KE-conserving
+      ! correction cannot amplify the baroclinic part of velocity by more
+      ! than 25%. This threshold is somewhat arbitrary. It was added to
+      ! prevent unstable behavior when the amplification factor is large.
+      if (ke_c_src < 1.5625 * ke_c_tgt) then
+        rescale_coef = sqrt(ke_c_src / ke_c_tgt)
+      else
+        rescale_coef = 1.25
+      endif
+      do k=1,nz
+        u_tgt(k) = u_bt + rescale_coef * (u_tgt(k) - u_bt)
+      enddo
+    endif
+
+    if (CS%id_remap_delta_integ_u2>0) then
+      do k=1,nz
+        u2h_tot = u2h_tot + h2(k) * (u_tgt(k)**2)
+      enddo
+      du2h_tot(I,j) = u2h_tot * I_dt
+    endif
 
     if ((CS%BBL_h_vel_mask > 0.0) .and. (CS%h_vel_mask > 0.0)) &
       call mask_near_bottom_vel(u_tgt, h2, CS%BBL_h_vel_mask, CS%h_vel_mask, nz)
@@ -1091,12 +1204,16 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
     enddo !k
   endif ; enddo ; enddo
 
+  if (CS%id_remap_delta_integ_u2>0) call post_data(CS%id_remap_delta_integ_u2, du2h_tot, CS%diag)
+
   if (show_call_tree) call callTree_waypoint("u remapped (ALE_remap_velocities)")
 
 
   ! --- Remap v profiles from the source vertical grid onto the new target grid.
 
-  !$OMP parallel do default(shared) private(h1,h2,v_src,h_mask_vel,v_tgt)
+  !$OMP parallel do default(shared) private(h1,h2,v_src,h_mask_vel,v_tgt, &
+  !$OMP                                     v_bt,ke_c_src,ke_c_tgt,rescale_coef, &
+  !$OMP                                     u2h_tot,v2h_tot)
   do J=G%JscB,G%JecB ; do i=G%isc,G%iec ; if (G%mask2dCv(i,J)>0.) then
 
     do k=1,nz
@@ -1105,8 +1222,49 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
       v_src(k) = v(i,J,k)
     enddo
 
-    call remapping_core_h(CS%vel_remapCS, nz, h1, v_src, nz, h2, v_tgt, &
-                          h_neglect, h_neglect_edge)
+    if (CS%id_remap_delta_integ_v2>0) then
+      v2h_tot = 0.
+      do k=1,nz
+        v2h_tot = v2h_tot - h1(k) * (v_src(k)**2)
+      enddo
+    endif
+
+    call remapping_core_h(CS%vel_remapCS, nz, h1, v_src, nz, h2, v_tgt)
+
+    if (variance_option .and. CS%conserve_ke) then
+    ! Conserve ke_v by correcting baroclinic component.
+    ! Assumes total depth doesn't change during remap, and
+    ! that \int v(z) dz doesn't change during remap.
+      ! First get barotropic component
+      v_bt = 0.0
+      do k=1,nz
+        v_bt = v_bt + h2(k) * v_tgt(k) ! Dimensions [H L T-1]
+      enddo
+      v_bt = v_bt / (sum(h2(1:nz)) + GV%H_subroundoff) ! Dimensions return to [L T-1]
+      ! Next get baroclinic ke = \int (u-u_bt)^2 from source and target
+      ke_c_src = 0.0
+      ke_c_tgt = 0.0
+      do k=1,nz
+        ke_c_src = ke_c_src + h1(k) * (v_src(k) - v_bt)**2
+        ke_c_tgt = ke_c_tgt + h2(k) * (v_tgt(k) - v_bt)**2
+      enddo
+      ! Next rescale baroclinic component on target grid to conserve ke
+      if (ke_c_src < 1.5625 * ke_c_tgt) then
+        rescale_coef = sqrt(ke_c_src / ke_c_tgt)
+      else
+        rescale_coef = 1.25
+      endif
+      do k=1,nz
+        v_tgt(k) = v_bt + rescale_coef * (v_tgt(k) - v_bt)
+      enddo
+    endif
+
+    if (CS%id_remap_delta_integ_v2>0) then
+      do k=1,nz
+        v2h_tot = v2h_tot + h2(k) * (v_tgt(k)**2)
+      enddo
+      dv2h_tot(I,j) = v2h_tot * I_dt
+    endif
 
     if ((CS%BBL_h_vel_mask > 0.0) .and. (CS%h_vel_mask > 0.0)) then
       call mask_near_bottom_vel(v_tgt, h2, CS%BBL_h_vel_mask, CS%h_vel_mask, nz)
@@ -1117,6 +1275,8 @@ subroutine ALE_remap_velocities(CS, G, GV, h_old_u, h_old_v, h_new_u, h_new_v, u
       v(i,J,k) = v_tgt(k)
     enddo !k
   endif ; enddo ; enddo
+
+  if (CS%id_remap_delta_integ_v2>0) call post_data(CS%id_remap_delta_integ_v2, dv2h_tot, CS%diag)
 
   if (show_call_tree) call callTree_waypoint("v remapped (ALE_remap_velocities)")
   if (show_call_tree) call callTree_leave("ALE_remap_velocities()")
@@ -1259,17 +1419,17 @@ end subroutine mask_near_bottom_vel
 !> Remaps a single scalar between grids described by thicknesses h_src and h_dst.
 !! h_dst must be dimensioned as a model array with GV%ke layers while h_src can
 !! have an arbitrary number of layers specified by nk_src.
-subroutine ALE_remap_scalar(CS, G, GV, nk_src, h_src, s_src, h_dst, s_dst, all_cells, old_remap, &
-                            answers_2018, answer_date )
+subroutine ALE_remap_scalar(CS, G, GV, nk_src, h_src, s_src, h_dst, s_dst, all_cells, old_remap)
   type(remapping_CS),                      intent(in)    :: CS        !< Remapping control structure
   type(ocean_grid_type),                   intent(in)    :: G         !< Ocean grid structure
   type(verticalGrid_type),                 intent(in)    :: GV        !< Ocean vertical grid structure
   integer,                                 intent(in)    :: nk_src    !< Number of levels on source grid
   real, dimension(SZI_(G),SZJ_(G),nk_src), intent(in)    :: h_src     !< Level thickness of source grid
-                                                                      !! [H ~> m or kg m-2]
+                                                                      !! [H ~> m or kg m-2] or other units
+                                                                      !! if H_neglect is provided
   real, dimension(SZI_(G),SZJ_(G),nk_src), intent(in)    :: s_src     !< Scalar on source grid, in arbitrary units [A]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),intent(in)   :: h_dst     !< Level thickness of destination grid
-                                                                      !! [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),intent(in)   :: h_dst     !< Level thickness of destination grid in the
+                                                                      !! same units as h_src, often [H ~> m or kg m-2]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),intent(inout) :: s_dst    !< Scalar on destination grid, in the same
                                                                       !! arbitrary units as s_src [A]
   logical, optional,                       intent(in)    :: all_cells !< If false, only reconstruct for
@@ -1277,33 +1437,16 @@ subroutine ALE_remap_scalar(CS, G, GV, nk_src, h_src, s_src, h_dst, s_dst, all_c
                                                                       !! layers otherwise (default).
   logical, optional,                       intent(in)    :: old_remap !< If true, use the old "remapping_core_w"
                                                                       !! method, otherwise use "remapping_core_h".
-  logical,                       optional, intent(in)    :: answers_2018 !< If true, use the order of arithmetic
-                                                                      !! and expressions that recover the answers for
-                                                                      !! remapping from the end of 2018. Otherwise,
-                                                                      !! use more robust forms of the same expressions.
-  integer,                       optional, intent(in)    :: answer_date !< The vintage of the expressions to use
-                                                                      !! for remapping
-  ! Local variables
+   ! Local variables
   integer :: i, j, k, n_points
   real :: dx(GV%ke+1) ! Change in interface position [H ~> m or kg m-2]
-  real :: h_neglect, h_neglect_edge  ! Tiny thicknesses used in remapping [H ~> m or kg m-2]
-  logical :: ignore_vanished_layers, use_remapping_core_w, use_2018_remap
+  logical :: ignore_vanished_layers, use_remapping_core_w
 
   ignore_vanished_layers = .false.
   if (present(all_cells)) ignore_vanished_layers = .not. all_cells
   use_remapping_core_w = .false.
   if (present(old_remap)) use_remapping_core_w = old_remap
   n_points = nk_src
-  use_2018_remap = .true. ; if (present(answers_2018)) use_2018_remap = answers_2018
-  if (present(answer_date)) use_2018_remap = (answer_date < 20190101)
-
-  if (.not.use_2018_remap) then
-    h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
-  elseif (GV%Boussinesq) then
-    h_neglect = GV%m_to_H*1.0e-30 ; h_neglect_edge = GV%m_to_H*1.0e-10
-  else
-    h_neglect = GV%kg_m2_to_H*1.0e-30 ; h_neglect_edge = GV%kg_m2_to_H*1.0e-10
-  endif
 
   !$OMP parallel do default(shared) firstprivate(n_points,dx)
   do j = G%jsc,G%jec ; do i = G%isc,G%iec
@@ -1318,10 +1461,10 @@ subroutine ALE_remap_scalar(CS, G, GV, nk_src, h_src, s_src, h_dst, s_dst, all_c
       if (use_remapping_core_w) then
         call dzFromH1H2( n_points, h_src(i,j,1:n_points), GV%ke, h_dst(i,j,:), dx )
         call remapping_core_w(CS, n_points, h_src(i,j,1:n_points), s_src(i,j,1:n_points), &
-                              GV%ke, dx, s_dst(i,j,:), h_neglect, h_neglect_edge)
+                              GV%ke, dx, s_dst(i,j,:))
       else
         call remapping_core_h(CS, n_points, h_src(i,j,1:n_points), s_src(i,j,1:n_points), &
-                              GV%ke, h_dst(i,j,:), s_dst(i,j,:), h_neglect, h_neglect_edge)
+                              GV%ke, h_dst(i,j,:), s_dst(i,j,:))
       endif
     else
       s_dst(i,j,:) = 0.
