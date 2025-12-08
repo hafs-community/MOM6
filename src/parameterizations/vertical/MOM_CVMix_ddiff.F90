@@ -35,7 +35,7 @@ type, public :: CVMix_ddiff_cs ; private
   real    :: kappa_ddiff_param1 !< exterior coefficient in diffusive convection regime [nondim]
   real    :: kappa_ddiff_param2 !< middle coefficient in diffusive convection regime [nondim]
   real    :: kappa_ddiff_param3 !< interior coefficient in diffusive convection regime [nondim]
-  real    :: min_thickness      !< Minimum thickness allowed [H ~> m or kg-2]
+  real    :: min_thickness      !< Minimum thickness allowed [H ~> m or kg m-2]
   character(len=4) :: diff_conv_type !< type of diffusive convection to use. Options are Marmorino &
                                 !! Caldwell 1976 ("MC76"; default) and Kelley 1988, 1990 ("K90")
   logical :: debug              !< If true, turn on debugging
@@ -245,8 +245,8 @@ subroutine compute_ddiff_coeffs(h, tv, G, GV, US, j, Kd_T, Kd_S, CS, R_rho)
       iFaceHeight(k+1) = iFaceHeight(k) - dh
     enddo
 
-    ! gets index of the level and interface above hbl
-    !kOBL = CVmix_kpp_compute_kOBL_depth(iFaceHeight, cellHeight, GV%Z_to_H*hbl(i,j))
+    ! gets index of the level and interface above hbl in [H ~> m or kg m-2]
+    !kOBL = CVmix_kpp_compute_kOBL_depth(iFaceHeight, cellHeight, hbl(i,j))
 
     Kd1_T(:) = 0.0 ; Kd1_S(:) = 0.0
     call CVMix_coeffs_ddiff(Tdiff_out=Kd1_T(:), &

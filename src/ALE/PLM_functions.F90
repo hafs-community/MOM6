@@ -12,24 +12,23 @@ public PLM_reconstruction
 public PLM_slope_wa
 public PLM_slope_cw
 
-real, parameter :: hNeglect_dflt = 1.E-30 !< Default negligible cell thickness
-
 contains
 
-!> Returns a limited PLM slope following White and Adcroft, 2008. [units of u]
+!> Returns a limited PLM slope following White and Adcroft, 2008, in the same arbitrary
+!! units [A] as the input values.
 !! Note that this is not the same as the Colella and Woodward method.
 real elemental pure function PLM_slope_wa(h_l, h_c, h_r, h_neglect, u_l, u_c, u_r)
-  real, intent(in) :: h_l !< Thickness of left cell [units of grid thickness]
-  real, intent(in) :: h_c !< Thickness of center cell [units of grid thickness]
-  real, intent(in) :: h_r !< Thickness of right cell [units of grid thickness]
-  real, intent(in) :: h_neglect !< A negligible thickness [units of grid thickness]
-  real, intent(in) :: u_l !< Value of left cell [units of u]
-  real, intent(in) :: u_c !< Value of center cell [units of u]
-  real, intent(in) :: u_r !< Value of right cell [units of u]
+  real, intent(in) :: h_l !< Thickness of left cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_c !< Thickness of center cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_r !< Thickness of right cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_neglect !< A negligible thickness [H]
+  real, intent(in) :: u_l !< Value of left cell in arbitrary units [A]
+  real, intent(in) :: u_c !< Value of center cell in arbitrary units [A]
+  real, intent(in) :: u_r !< Value of right cell in arbitrary units [A]
   ! Local variables
   real :: sigma_l, sigma_c, sigma_r ! Left, central and right slope estimates as
-                                    ! differences across the cell [units of u]
-  real :: u_min, u_max ! Minimum and maximum value across cell [units of u]
+                                    ! differences across the cell [A]
+  real :: u_min, u_max ! Minimum and maximum value across cell [A]
 
   ! Side differences
   sigma_r = u_r - u_c
@@ -63,20 +62,21 @@ real elemental pure function PLM_slope_wa(h_l, h_c, h_r, h_neglect, u_l, u_c, u_
 
 end function PLM_slope_wa
 
-!> Returns a limited PLM slope following Colella and Woodward 1984.
+!> Returns a limited PLM slope following Colella and Woodward 1984, in the same
+!! arbitrary units as the input values [A].
 real elemental pure function PLM_slope_cw(h_l, h_c, h_r, h_neglect, u_l, u_c, u_r)
-  real, intent(in) :: h_l !< Thickness of left cell [units of grid thickness]
-  real, intent(in) :: h_c !< Thickness of center cell [units of grid thickness]
-  real, intent(in) :: h_r !< Thickness of right cell [units of grid thickness]
-  real, intent(in) :: h_neglect !< A negligible thickness [units of grid thickness]
-  real, intent(in) :: u_l !< Value of left cell [units of u]
-  real, intent(in) :: u_c !< Value of center cell [units of u]
-  real, intent(in) :: u_r !< Value of right cell [units of u]
+  real, intent(in) :: h_l !< Thickness of left cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_c !< Thickness of center cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_r !< Thickness of right cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_neglect !< A negligible thickness [H]
+  real, intent(in) :: u_l !< Value of left cell in arbitrary units [A]
+  real, intent(in) :: u_c !< Value of center cell in arbitrary units [A]
+  real, intent(in) :: u_r !< Value of right cell in arbitrary units [A]
   ! Local variables
   real :: sigma_l, sigma_c, sigma_r ! Left, central and right slope estimates as
-                                    ! differences across the cell [units of u]
-  real :: u_min, u_max ! Minimum and maximum value across cell [units of u]
-  real :: h_cn ! Thickness of center cell [units of grid thickness]
+                                    ! differences across the cell [A]
+  real :: u_min, u_max ! Minimum and maximum value across cell [A]
+  real :: h_cn ! Thickness of center cell [H]
 
   h_cn = h_c + h_neglect
 
@@ -117,18 +117,19 @@ real elemental pure function PLM_slope_cw(h_l, h_c, h_r, h_neglect, u_l, u_c, u_
 
 end function PLM_slope_cw
 
-!> Returns a limited PLM slope following Colella and Woodward 1984.
+!> Returns a limited PLM slope following Colella and Woodward 1984, in the same
+!! arbitrary units as the input values [A].
 real elemental pure function PLM_monotonized_slope(u_l, u_c, u_r, s_l, s_c, s_r)
-  real, intent(in) :: u_l !< Value of left cell [units of u]
-  real, intent(in) :: u_c !< Value of center cell [units of u]
-  real, intent(in) :: u_r !< Value of right cell [units of u]
-  real, intent(in) :: s_l !< PLM slope of left cell [units of u]
-  real, intent(in) :: s_c !< PLM slope of center cell [units of u]
-  real, intent(in) :: s_r !< PLM slope of right cell [units of u]
+  real, intent(in) :: u_l !< Value of left cell in arbitrary units [A]
+  real, intent(in) :: u_c !< Value of center cell in arbitrary units [A]
+  real, intent(in) :: u_r !< Value of right cell in arbitrary units [A]
+  real, intent(in) :: s_l !< PLM slope of left cell [A]
+  real, intent(in) :: s_c !< PLM slope of center cell [A]
+  real, intent(in) :: s_r !< PLM slope of right cell [A]
   ! Local variables
-  real :: e_r, e_l, edge ! Right, left and temporary edge values [units of u]
-  real :: almost_two ! The number 2, almost.
-  real :: slp ! Magnitude of PLM central slope [units of u]
+  real :: e_r, e_l, edge ! Right, left and temporary edge values [A]
+  real :: almost_two ! The number 2, almost [nondim]
+  real :: slp ! Magnitude of PLM central slope [A]
 
   almost_two = 2. * ( 1. - epsilon(s_c) )
 
@@ -155,17 +156,18 @@ real elemental pure function PLM_monotonized_slope(u_l, u_c, u_r, s_l, s_c, s_r)
 
 end function PLM_monotonized_slope
 
-!> Returns a PLM slope using h2 extrapolation from a cell to the left.
+!> Returns a PLM slope using h2 extrapolation from a cell to the left, in the same
+!! arbitrary units as the input values [A].
 !! Use the negative to extrapolate from the cell to the right.
 real elemental pure function PLM_extrapolate_slope(h_l, h_c, h_neglect, u_l, u_c)
-  real, intent(in) :: h_l !< Thickness of left cell [units of grid thickness]
-  real, intent(in) :: h_c !< Thickness of center cell [units of grid thickness]
-  real, intent(in) :: h_neglect !< A negligible thickness [units of grid thickness]
-  real, intent(in) :: u_l !< Value of left cell [units of u]
-  real, intent(in) :: u_c !< Value of center cell [units of u]
+  real, intent(in) :: h_l !< Thickness of left cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_c !< Thickness of center cell in arbitrary grid thickness units [H]
+  real, intent(in) :: h_neglect !< A negligible thickness [H]
+  real, intent(in) :: u_l !< Value of left cell in arbitrary units [A]
+  real, intent(in) :: u_c !< Value of center cell in arbitrary units [A]
   ! Local variables
-  real :: left_edge ! Left edge value [units of u]
-  real :: hl, hc ! Left and central cell thicknesses [units of grid thickness]
+  real :: left_edge ! Left edge value [A]
+  real :: hl, hc ! Left and central cell thicknesses [H]
 
   ! Avoid division by zero for vanished cells
   hl = h_l + h_neglect
@@ -185,32 +187,31 @@ end function PLM_extrapolate_slope
 !! defining 'grid' and 'ppoly'. No consistency check is performed here.
 subroutine PLM_reconstruction( N, h, u, edge_values, ppoly_coef, h_neglect )
   integer,              intent(in)    :: N !< Number of cells
-  real, dimension(:),   intent(in)    :: h !< cell widths (size N)
-  real, dimension(:),   intent(in)    :: u !< cell averages (size N)
+  real, dimension(:),   intent(in)    :: h !< cell widths (size N) [H]
+  real, dimension(:),   intent(in)    :: u !< cell averages (size N) in arbitrary units [A]
   real, dimension(:,:), intent(inout) :: edge_values !< edge values of piecewise polynomials,
-                                           !! with the same units as u.
+                                           !! with the same units as u [A].
   real, dimension(:,:), intent(inout) :: ppoly_coef !< coefficients of piecewise polynomials, mainly
-                                           !! with the same units as u.
-  real,       optional, intent(in)    :: h_neglect !< A negligibly small width for
+                                           !! with the same units as u [A].
+  real,                 intent(in)    :: h_neglect !< A negligibly small width for
                                            !! the purpose of cell reconstructions
-                                           !! in the same units as h
+                                           !! in the same units as h [H]
 
   ! Local variables
-  integer       :: k                    ! loop index
-  real          :: u_l, u_r             ! left and right cell averages
-  real          :: slope                ! retained PLM slope
-  real          :: e_r, edge
-  real          :: almost_one
-  real, dimension(N) :: slp, mslp
-  real    :: hNeglect
-
-  hNeglect = hNeglect_dflt ; if (present(h_neglect)) hNeglect = h_neglect
+  integer       :: k           ! loop index
+  real          :: u_l, u_r    ! left and right cell averages [A]
+  real          :: slope       ! retained PLM slope for a normalized cell width [A]
+  real          :: e_r         ! The edge value in the neighboring cell [A]
+  real          :: edge        ! The projected edge value in the cell [A]
+  real          :: almost_one  ! A value that is slightly smaller than 1 [nondim]
+  real, dimension(N) :: slp    ! The first guess at the normalized tracer slopes [A]
+  real, dimension(N) :: mslp   ! The monotonized normalized tracer slopes [A]
 
   almost_one = 1. - epsilon(slope)
 
   ! Loop on interior cells
   do k = 2,N-1
-    slp(k) = PLM_slope_wa(h(k-1), h(k), h(k+1), hNeglect, u(k-1), u(k), u(k+1))
+    slp(k) = PLM_slope_wa(h(k-1), h(k), h(k+1), h_neglect, u(k-1), u(k), u(k+1))
   enddo ! end loop on interior cells
 
   ! Boundary cells use PCM. Extrapolation is handled after monotonization.
@@ -265,23 +266,20 @@ end subroutine PLM_reconstruction
 !! defining 'grid' and 'ppoly'. No consistency check is performed here.
 subroutine PLM_boundary_extrapolation( N, h, u, edge_values, ppoly_coef, h_neglect )
   integer,              intent(in)    :: N !< Number of cells
-  real, dimension(:),   intent(in)    :: h !< cell widths (size N)
-  real, dimension(:),   intent(in)    :: u !< cell averages (size N)
+  real, dimension(:),   intent(in)    :: h !< cell widths (size N) [H]
+  real, dimension(:),   intent(in)    :: u !< cell averages (size N) in arbitrary units [A]
   real, dimension(:,:), intent(inout) :: edge_values !< edge values of piecewise polynomials,
-                                           !! with the same units as u.
+                                           !! with the same units as u [A].
   real, dimension(:,:), intent(inout) :: ppoly_coef !< coefficients of piecewise polynomials, mainly
-                                           !! with the same units as u.
-  real,       optional, intent(in)    :: h_neglect !< A negligibly small width for
+                                           !! with the same units as u [A].
+  real,                 intent(in)    :: h_neglect !< A negligibly small width for
                                            !! the purpose of cell reconstructions
-                                           !! in the same units as h
+                                           !! in the same units as h [H]
   ! Local variables
-  real    :: slope                ! retained PLM slope
-  real    :: hNeglect
-
-  hNeglect = hNeglect_dflt ; if (present(h_neglect)) hNeglect = h_neglect
+  real    :: slope     ! retained PLM slope for a normalized cell width [A]
 
   ! Extrapolate from 2 to 1 to estimate slope
-  slope = - PLM_extrapolate_slope( h(2), h(1), hNeglect, u(2), u(1) )
+  slope = - PLM_extrapolate_slope( h(2), h(1), h_neglect, u(2), u(1) )
 
   edge_values(1,1) = u(1) - 0.5 * slope
   edge_values(1,2) = u(1) + 0.5 * slope
@@ -290,7 +288,7 @@ subroutine PLM_boundary_extrapolation( N, h, u, edge_values, ppoly_coef, h_negle
   ppoly_coef(1,2) = edge_values(1,2) - edge_values(1,1)
 
   ! Extrapolate from N-1 to N to estimate slope
-  slope = PLM_extrapolate_slope( h(N-1), h(N), hNeglect, u(N-1), u(N) )
+  slope = PLM_extrapolate_slope( h(N-1), h(N), h_neglect, u(N-1), u(N) )
 
   edge_values(N,1) = u(N) - 0.5 * slope
   edge_values(N,2) = u(N) + 0.5 * slope

@@ -10,7 +10,6 @@ use MOM_error_handler, only : MOM_mesg, MOM_error, FATAL, is_root_pe, WARNING
 use MOM_file_parser, only : get_param, log_version, param_file_type
 use MOM_get_input, only : directories
 use MOM_grid, only : ocean_grid_type
-use MOM_interface_heights, only : dz_to_thickness
 use MOM_io, only : file_exists, MOM_read_data, slasher
 use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : thermo_var_ptrs
@@ -60,7 +59,6 @@ subroutine ISOMIP_initialize_topography(D, G, param_file, max_depth, US)
   real :: ly              ! domain width (across ice flow) [L ~> m]
   real :: bx, by          ! The x- and y- contributions to the bathymetric profiles at a point [Z ~> m]
   real :: xtil            ! x-positon normalized by the characteristic along-flow length scale [nondim]
-  real :: km_to_L         ! The conversion factor from the axis units to L [L km-1 ~> 1e3]
   logical :: is_2D        ! If true, use a 2D setup
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
@@ -94,7 +92,8 @@ subroutine ISOMIP_initialize_topography(D, G, param_file, max_depth, US)
                  "Characteristic width of the side walls of the channel in the ISOMIP configuration.", &
                  units="m", default=4.0e3, scale=US%m_to_L)
 
-  km_to_L = 1.0e3*US%m_to_L
+  if (G%grid_unit_to_L <= 0.) call MOM_error(FATAL, "ISOMIP_initialization.F90: " //&
+          "ISOMIP_initialize_topography is only set to work with Cartesian axis units.")
 
   ! The following variables should be transformed into runtime parameters.
   b0 = -150.0*US%m_to_Z ; b2 = -728.8*US%m_to_Z ; b4 = 343.91*US%m_to_Z ; b6 = -50.57*US%m_to_Z
@@ -102,8 +101,8 @@ subroutine ISOMIP_initialize_topography(D, G, param_file, max_depth, US)
   if (is_2D) then
     do j=js,je ; do i=is,ie
       ! For the 2D setup take a slice through the middle of the domain
-      xtil = G%geoLonT(i,j)*km_to_L / xbar
-      !xtil = 450.*km_to_L / xbar
+      xtil = G%geoLonT(i,j)*G%grid_unit_to_L / xbar
+      ! xtil = 450.0e3*US%m_to_L / xbar
       bx = b0 + b2*xtil**2 + b4*xtil**4 + b6*xtil**6
 
       by = 2.0 * dc / (1.0 + exp(2.0*wc / fc))
@@ -118,17 +117,17 @@ subroutine ISOMIP_initialize_topography(D, G, param_file, max_depth, US)
       ! 3D setup
       ! ===== TEST =====
       !if (G%geoLonT(i,j)<500.) then
-      !  xtil = 500.*km_to_L / xbar
+      !  xtil = 500.0e3*US%m_to_L / xbar
       !else
-      !  xtil = G%geoLonT(i,j)*km_to_L / xbar
+      !  xtil = G%geoLonT(i,j)*G%grid_unit_to_L / xbar
       !endif
       ! ===== TEST =====
 
-      xtil = G%geoLonT(i,j)*km_to_L / xbar
+      xtil = G%geoLonT(i,j)*G%grid_unit_to_L / xbar
 
       bx = b0 + b2*xtil**2 + b4*xtil**4 + b6*xtil**6
-      by = (dc / (1.0 + exp(-2.*(G%geoLatT(i,j)*km_to_L - 0.5*ly - wc) / fc))) + &
-           (dc / (1.0 + exp(2.*(G%geoLatT(i,j)*km_to_L - 0.5*ly + wc) / fc)))
+      by = (dc / (1.0 + exp(-2.*(G%geoLatT(i,j)*G%grid_unit_to_L - 0.5*ly - wc) / fc))) + &
+           (dc / (1.0 + exp(2.*(G%geoLatT(i,j)*G%grid_unit_to_L - 0.5*ly + wc) / fc)))
 
       D(i,j) = -max(bx+by, -bmax)
       if (D(i,j) > max_depth) D(i,j) = max_depth
@@ -348,7 +347,7 @@ subroutine ISOMIP_initialize_temperature_salinity ( T, S, h, depth_tot, G, GV, U
                   default=.false., do_not_log=just_read)
       call get_param(param_file, mdl, "DRHO_DS", drho_dS1, &
                   "Partial derivative of density with salinity.", &
-                  units="kg m-3 PSU-1", scale=US%kg_m3_to_R*US%S_to_ppt, &
+                  units="kg m-3 ppt-1", scale=US%kg_m3_to_R*US%S_to_ppt, &
                   fail_if_missing=.not.just_read, do_not_log=just_read)
       call get_param(param_file, mdl, "DRHO_DT", drho_dT1, &
                   "Partial derivative of density with temperature.", &
@@ -359,7 +358,7 @@ subroutine ISOMIP_initialize_temperature_salinity ( T, S, h, depth_tot, G, GV, U
                   units="degC", scale=US%degC_to_C, fail_if_missing=.not.just_read, do_not_log=just_read)
       call get_param(param_file, mdl, "S_REF", S_Ref, &
                   "A reference salinity used in initialization.", &
-                  units="PSU", default=35.0, scale=US%ppt_to_S, do_not_log=just_read)
+                  units="ppt", default=35.0, scale=US%ppt_to_S, do_not_log=just_read)
       if (just_read) return ! All run-time parameters have been read, so return.
 
       ! write(mesg,*) 'read drho_dS, drho_dT', drho_dS1, drho_dT1
@@ -458,7 +457,6 @@ subroutine ISOMIP_initialize_sponges(G, GV, US, tv, depth_tot, PF, use_ALE, CSp,
   real :: S(SZI_(G),SZJ_(G),SZK_(GV)) ! A temporary array for salt [S ~> ppt]
   ! real :: RHO(SZI_(G),SZJ_(G),SZK_(GV)) ! A temporary array for RHO [R ~> kg m-3]
   real :: dz(SZI_(G),SZJ_(G),SZK_(GV)) ! Sponge layer thicknesses in height units [Z ~> m]
-  real :: h(SZI_(G),SZJ_(G),SZK_(GV))  ! Sponge layer thicknesses [H ~> m or kg m-2]
   real :: Idamp(SZI_(G),SZJ_(G))    ! The sponge damping rate [T-1 ~> s-1]
   real :: TNUDG                     ! Nudging time scale [T ~> s]
   real :: S_sur, S_bot              ! Surface and bottom salinities in the sponge region [S ~> ppt]
@@ -624,13 +622,6 @@ subroutine ISOMIP_initialize_sponges(G, GV, US, tv, depth_tot, PF, use_ALE, CSp,
       enddo
     enddo ; enddo
 
-    ! Convert thicknesses from height units to thickness units
-    if (associated(tv%eqn_of_state)) then
-      call dz_to_thickness(dz, T, S, tv%eqn_of_state, h, G, GV, US)
-    else
-      call MOM_error(FATAL, "The ISOMIP test case requires an equation of state.")
-    endif
-
     ! for debugging
     !i=G%iec; j=G%jec
     !do k = 1,nz
@@ -640,7 +631,7 @@ subroutine ISOMIP_initialize_sponges(G, GV, US, tv, depth_tot, PF, use_ALE, CSp,
     !enddo
 
     ! This call sets up the damping rates and interface heights in the sponges.
-    call initialize_ALE_sponge(Idamp, G, GV, PF, ACSp, h, nz)
+    call initialize_ALE_sponge(Idamp, G, GV, PF, ACSp, dz, nz, data_h_is_Z=.true.)
 
     !   Now register all of the fields which are damped in the sponge.   !
     ! By default, momentum is advected vertically within the sponge, but !

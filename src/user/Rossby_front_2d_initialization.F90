@@ -68,7 +68,7 @@ subroutine Rossby_front_initialize_thickness(h, G, GV, US, param_file, just_read
   call get_param(param_file, mdl, "REGRIDDING_COORDINATE_MODE", verticalCoordinate, &
                  default=DEFAULT_COORDINATE_MODE, do_not_log=just_read)
   call get_param(param_file, mdl, "T_RANGE", T_range, 'Initial temperature range', &
-                 units='C', default=0.0, scale=US%degC_to_C, do_not_log=just_read)
+                 units="degC", default=0.0, scale=US%degC_to_C, do_not_log=just_read)
   call get_param(param_file, mdl, "DRHO_DT", dRho_dT, &
                  units="kg m-3 degC-1", default=-0.2, scale=US%kg_m3_to_R*US%C_to_degC, do_not_log=.true.)
   call get_param(param_file, mdl, "MAXIMUM_DEPTH", max_depth, &
@@ -155,11 +155,11 @@ subroutine Rossby_front_initialize_temperature_salinity(T, S, h, G, GV, US, &
   call get_param(param_file, mdl,"REGRIDDING_COORDINATE_MODE", verticalCoordinate, &
                  default=DEFAULT_COORDINATE_MODE, do_not_log=just_read)
   call get_param(param_file, mdl, "S_REF", S_ref, 'Reference salinity', &
-                 default=35.0, units='1e-3', scale=US%ppt_to_S, do_not_log=just_read)
+                 default=35.0, units="ppt", scale=US%ppt_to_S, do_not_log=just_read)
   call get_param(param_file, mdl, "T_REF", T_ref, 'Reference temperature', &
-                 units='C', scale=US%degC_to_C, fail_if_missing=.not.just_read, do_not_log=just_read)
+                 units="degC", scale=US%degC_to_C, fail_if_missing=.not.just_read, do_not_log=just_read)
   call get_param(param_file, mdl, "T_RANGE", T_range, 'Initial temperature range', &
-                 units='C', default=0.0, scale=US%degC_to_C, do_not_log=just_read)
+                 units="degC", default=0.0, scale=US%degC_to_C, do_not_log=just_read)
   call get_param(param_file, mdl, "MAXIMUM_DEPTH", max_depth, &
                  units="m", default=-1.e9, scale=GV%m_to_H, do_not_log=.true.)
 
@@ -221,7 +221,7 @@ subroutine Rossby_front_initialize_velocity(u, v, h, G, GV, US, param_file, just
   real    :: I_f          ! The Adcroft reciprocal of the local Coriolis parameter [T ~> s]
   real    :: Ty           ! The meridional temperature gradient [C L-1 ~> degC m-1]
   real    :: hAtU         ! Interpolated layer thickness in height units [H ~> m or kg m-2].
-  real    :: u_int        ! The zonal velocity at an interface [L T-1 ~> m s=1]
+  real    :: u_int        ! The zonal velocity at an interface [L T-1 ~> m s-1]
   real    :: max_depth    ! Maximum depth of the model bathymetry [H ~> m or kg m-2]
   integer :: i, j, k, is, ie, js, je, nz
   character(len=40) :: verticalCoordinate
@@ -231,11 +231,11 @@ subroutine Rossby_front_initialize_velocity(u, v, h, G, GV, US, param_file, just
   call get_param(param_file, mdl, "REGRIDDING_COORDINATE_MODE", verticalCoordinate, &
                  default=DEFAULT_COORDINATE_MODE, do_not_log=just_read)
   call get_param(param_file, mdl, "T_RANGE", T_range, 'Initial temperature range', &
-                 units='C', default=0.0, scale=US%degC_to_C, do_not_log=just_read)
+                 units="degC", default=0.0, scale=US%degC_to_C, do_not_log=just_read)
   call get_param(param_file, mdl, "S_REF", S_ref, 'Reference salinity', &
-                 default=35.0, units='1e-3', scale=US%ppt_to_S, do_not_log=.true.)
+                 default=35.0, units="ppt", scale=US%ppt_to_S, do_not_log=.true.)
   call get_param(param_file, mdl, "T_REF", T_ref, 'Reference temperature', &
-                 units='C', scale=US%degC_to_C, fail_if_missing=.not.just_read, do_not_log=.true.)
+                 units="degC", scale=US%degC_to_C, fail_if_missing=.not.just_read, do_not_log=.true.)
   call get_param(param_file, mdl, "RHO_T0_S0", Rho_T0_S0, &
                  units="kg m-3", default=1000.0, scale=US%kg_m3_to_R, do_not_log=.true.)
   call get_param(param_file, mdl, "DRHO_DT", dRho_dT, &
@@ -250,6 +250,8 @@ subroutine Rossby_front_initialize_velocity(u, v, h, G, GV, US, param_file, just
   if (max_depth <= 0.0) call MOM_error(FATAL, &
       "Rossby_front_initialize_thickness, Rossby_front_initialize_velocity: "//&
       "This module requires a positive value of MAXIMUM_DEPTH.")
+  if (G%grid_unit_to_L <= 0.) call MOM_error(FATAL, 'Rossby_front_2d_initialization.F90: '// &
+          "dTdy() is only set to work with Cartesian axis units.")
 
   v(:,:,:) = 0.0
   u(:,:,:) = 0.0
@@ -335,18 +337,16 @@ end function Hml
 real function dTdy( G, dT, lat, US )
   type(ocean_grid_type), intent(in) :: G     !< Grid structure
   real,                  intent(in) :: dT    !< Top to bottom temperature difference [C ~> degC]
-  real,                  intent(in) :: lat   !< Latitude in [km]
+  real,                  intent(in) :: lat   !< Latitude in the same units as geoLat, often [km]
   type(unit_scale_type), intent(in) :: US    !< A dimensional unit scaling type
   ! Local
   real :: PI   ! The ratio of the circumference of a circle to its diameter [nondim]
   real :: dHML ! The range of the mixed layer depths [Z ~> m]
   real :: dHdy ! The mixed layer depth gradient [Z L-1 ~> m m-1]
-  real :: km_to_L ! Horizontal axis unit conversion factor when AXIS_UNITS = 'k' (1000 m) [L km-1 ~> 1000]
 
   PI = 4.0 * atan(1.0)
-  km_to_L = 1.0e3*US%m_to_L
   dHML = 0.5 * ( HMLmax - HMLmin ) * G%max_depth
-  dHdy = dHML * ( PI / ( frontFractionalWidth * G%len_lat * km_to_L ) ) * cos( yPseudo(G, lat) )
+  dHdy = dHML * ( PI / ( frontFractionalWidth * G%len_lat * G%grid_unit_to_L ) ) * cos( yPseudo(G, lat) )
   dTdy = -( dT / G%max_depth ) * dHdy
 
 end function dTdy

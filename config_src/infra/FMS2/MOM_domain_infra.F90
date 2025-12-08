@@ -19,7 +19,8 @@ use mpp_domains_mod, only : mpp_start_group_update, mpp_complete_group_update
 use mpp_domains_mod, only : mpp_compute_block_extent, mpp_compute_extent
 use mpp_domains_mod, only : mpp_broadcast_domain, mpp_redistribute, mpp_global_field
 use mpp_domains_mod, only : AGRID, BGRID_NE, CGRID_NE, SCALAR_PAIR, BITWISE_EXACT_SUM
-use mpp_domains_mod, only : CYCLIC_GLOBAL_DOMAIN, FOLD_NORTH_EDGE
+use mpp_domains_mod, only : CYCLIC_GLOBAL_DOMAIN
+use mpp_domains_mod, only : FOLD_NORTH_EDGE, FOLD_SOUTH_EDGE, FOLD_EAST_EDGE, FOLD_WEST_EDGE
 use mpp_domains_mod, only : To_East => WUPDATE, To_West => EUPDATE, Omit_Corners => EDGEUPDATE
 use mpp_domains_mod, only : To_North => SUPDATE, To_South => NUPDATE
 use mpp_domains_mod, only : CENTER, CORNER, NORTH_FACE => NORTH, EAST_FACE => EAST
@@ -1257,53 +1258,89 @@ end subroutine redistribute_array_4d
 
 
 !> Rescale the values of a 4-D array in its computational domain by a constant factor
-subroutine rescale_comp_data_4d(domain, array, scale)
+subroutine rescale_comp_data_4d(domain, array, scale, zero_zeros)
   type(MOM_domain_type),    intent(in)    :: domain !< MOM domain from which to extract information
   real, dimension(:,:,:,:), intent(inout) :: array  !< The array which is having the data in its
                                                     !! computational domain rescaled
   real,                     intent(in)    :: scale  !< A scaling factor by which to multiply the
                                                     !! values in the computational domain of array
-  integer :: is, ie, js, je
+  logical,        optional, intent(in)    :: zero_zeros !< If present and true, convert negative zeros
+                                                    !! into ordinary signless zeros.
+  logical :: unsign_zeros ! If true, convert negative zeros into ordinary signless zeros.
+  integer :: is, ie, js, je, i, j, k, m
 
-  if (scale == 1.0) return
+  unsign_zeros = .false. ; if (present(zero_zeros)) unsign_zeros = zero_zeros
+
+  if ((scale == 1.0) .and. (.not.unsign_zeros)) return
 
   call get_simple_array_i_ind(domain, size(array,1), is, ie)
   call get_simple_array_j_ind(domain, size(array,2), js, je)
-  array(is:ie,js:je,:,:) = scale*array(is:ie,js:je,:,:)
+  if (scale /= 1.0) &
+    array(is:ie,js:je,:,:) = scale*array(is:ie,js:je,:,:)
+
+  if (unsign_zeros) then ! Convert negative zeros into zeros
+    do m=1,size(array,4) ; do k=1,size(array,3) ; do j=js,je ; do i=is,ie
+      if (array(i,j,k,m) == 0.0) array(i,j,k,m) = 0.0
+    enddo ; enddo ; enddo ; enddo
+  endif
 
 end subroutine rescale_comp_data_4d
 
 !> Rescale the values of a 3-D array in its computational domain by a constant factor
-subroutine rescale_comp_data_3d(domain, array, scale)
+subroutine rescale_comp_data_3d(domain, array, scale, zero_zeros)
   type(MOM_domain_type),  intent(in)    :: domain !< MOM domain from which to extract information
   real, dimension(:,:,:), intent(inout) :: array  !< The array which is having the data in its
                                                   !! computational domain rescaled
   real,                   intent(in)    :: scale  !< A scaling factor by which to multiply the
                                                   !! values in the computational domain of array
-  integer :: is, ie, js, je
+  logical,      optional, intent(in)    :: zero_zeros !< If present and true, convert negative zeros
+                                                  !! into ordinary signless zeros.
+  logical :: unsign_zeros ! If true, convert negative zeros into ordinary signless zeros.
+  integer :: is, ie, js, je, i, j, k
 
-  if (scale == 1.0) return
+  unsign_zeros = .false. ; if (present(zero_zeros)) unsign_zeros = zero_zeros
+
+  if ((scale == 1.0) .and. (.not.unsign_zeros)) return
 
   call get_simple_array_i_ind(domain, size(array,1), is, ie)
   call get_simple_array_j_ind(domain, size(array,2), js, je)
-  array(is:ie,js:je,:) = scale*array(is:ie,js:je,:)
+  if (scale /= 1.0) &
+    array(is:ie,js:je,:) = scale*array(is:ie,js:je,:)
+
+  if (unsign_zeros) then ! Convert negative zeros into zeros
+    do k=1,size(array,3) ; do j=js,je ; do i=is,ie
+      if (array(i,j,k) == 0.0) array(i,j,k) = 0.0
+    enddo ; enddo ; enddo
+  endif
 
 end subroutine rescale_comp_data_3d
 
 !> Rescale the values of a 2-D array in its computational domain by a constant factor
-subroutine rescale_comp_data_2d(domain, array, scale)
+subroutine rescale_comp_data_2d(domain, array, scale, zero_zeros)
   type(MOM_domain_type), intent(in)    :: domain !< MOM domain from which to extract information
   real, dimension(:,:),  intent(inout) :: array  !< The array which is having the data in its
                                                  !! computational domain rescaled
   real,                  intent(in)    :: scale  !< A scaling factor by which to multiply the
                                                  !! values in the computational domain of array
-  integer :: is, ie, js, je
+  logical,      optional, intent(in)   :: zero_zeros !< If present and true, convert negative zeros
+                                                  !! into ordinary signless zeros.
+  logical :: unsign_zeros ! If true, convert negative zeros into ordinary signless zeros.
+  integer :: is, ie, js, je, i, j
 
-  if (scale == 1.0) return
+  unsign_zeros = .false. ; if (present(zero_zeros)) unsign_zeros = zero_zeros
+
+  if ((scale == 1.0) .and. (.not.unsign_zeros)) return
 
   call get_simple_array_i_ind(domain, size(array,1), is, ie)
   call get_simple_array_j_ind(domain, size(array,2), js, je)
-  array(is:ie,js:je) = scale*array(is:ie,js:je)
+  if (scale /= 1.0) &
+    array(is:ie,js:je) = scale*array(is:ie,js:je)
+
+  if (unsign_zeros) then ! Convert negative zeros into zeros
+    do j=js,je ; do i=is,ie
+      if (array(i,j) == 0.0) array(i,j) = 0.0
+    enddo ; enddo
+  endif
 
 end subroutine rescale_comp_data_2d
 
@@ -1555,6 +1592,19 @@ subroutine clone_MD_to_MD(MD_in, MOM_dom, min_halo, halo_size, symmetric, domain
     call get_layout_extents(MD_in, exnj, exni)
 
     MOM_dom%X_FLAGS = MD_in%Y_FLAGS ; MOM_dom%Y_FLAGS = MD_in%X_FLAGS
+    ! Correct the position of a tripolar grid, assuming that flags are not additive.
+    if (modulo(qturns, 4) == 1) then
+      if (MD_in%Y_FLAGS == FOLD_NORTH_EDGE) MOM_dom%X_FLAGS = FOLD_EAST_EDGE
+      if (MD_in%Y_FLAGS == FOLD_SOUTH_EDGE) MOM_dom%X_FLAGS = FOLD_WEST_EDGE
+      if (MD_in%X_FLAGS == FOLD_EAST_EDGE) MOM_dom%Y_FLAGS = FOLD_SOUTH_EDGE
+      if (MD_in%X_FLAGS == FOLD_WEST_EDGE) MOM_dom%Y_FLAGS = FOLD_NORTH_EDGE
+    elseif (modulo(qturns, 4) == 3) then
+      if (MD_in%Y_FLAGS == FOLD_NORTH_EDGE) MOM_dom%X_FLAGS = FOLD_WEST_EDGE
+      if (MD_in%Y_FLAGS == FOLD_SOUTH_EDGE) MOM_dom%X_FLAGS = FOLD_EAST_EDGE
+      if (MD_in%X_FLAGS == FOLD_EAST_EDGE) MOM_dom%Y_FLAGS = FOLD_NORTH_EDGE
+      if (MD_in%X_FLAGS == FOLD_WEST_EDGE) MOM_dom%Y_FLAGS = FOLD_SOUTH_EDGE
+    endif
+
     MOM_dom%layout(:) = MD_in%layout(2:1:-1)
     MOM_dom%io_layout(:) = io_layout_in(2:1:-1)
   else
@@ -1563,11 +1613,19 @@ subroutine clone_MD_to_MD(MD_in, MOM_dom, min_halo, halo_size, symmetric, domain
     call get_layout_extents(MD_in, exni, exnj)
 
     MOM_dom%X_FLAGS = MD_in%X_FLAGS ; MOM_dom%Y_FLAGS = MD_in%Y_FLAGS
+    ! Correct the position of a tripolar grid, assuming that flags are not additive.
+    if (modulo(qturns, 4) == 2) then
+      if (MD_in%Y_FLAGS == FOLD_NORTH_EDGE) MOM_dom%Y_FLAGS = FOLD_SOUTH_EDGE
+      if (MD_in%Y_FLAGS == FOLD_SOUTH_EDGE) MOM_dom%Y_FLAGS = FOLD_NORTH_EDGE
+      if (MD_in%X_FLAGS == FOLD_EAST_EDGE) MOM_dom%X_FLAGS = FOLD_WEST_EDGE
+      if (MD_in%X_FLAGS == FOLD_WEST_EDGE) MOM_dom%X_FLAGS = FOLD_EAST_EDGE
+    endif
+
     MOM_dom%layout(:) = MD_in%layout(:)
     MOM_dom%io_layout(:) = io_layout_in(:)
   endif
 
-  ! Ensure that the points per processor are the same on the source and densitation grids.
+  ! Ensure that the points per processor are the same on the source and destination grids.
   select case (qturns)
     case (1) ; call invert(exni)
     case (2) ; call invert(exni) ; call invert(exnj)

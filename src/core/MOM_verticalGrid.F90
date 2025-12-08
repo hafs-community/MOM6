@@ -26,8 +26,9 @@ type, public :: verticalGrid_type
   ! Commonly used parameters
   integer :: ke     !< The number of layers/levels in the vertical
   real :: max_depth !< The maximum depth of the ocean [Z ~> m].
-  real :: mks_g_Earth !< The gravitational acceleration in unscaled MKS units [m s-2].
+!  real :: mks_g_Earth !< The gravitational acceleration in unscaled MKS units [m s-2].  This might not be used.
   real :: g_Earth   !< The gravitational acceleration [L2 Z-1 T-2 ~> m s-2].
+  real :: g_Earth_Z_T2 !< The gravitational acceleration in alternatively rescaled units [Z T-2 ~> m s-2]
   real :: Rho0      !< The density used in the Boussinesq approximation or nominal
                     !! density used to convert depths into mass units [R ~> kg m-3].
 
@@ -35,8 +36,12 @@ type, public :: verticalGrid_type
   character(len=40) :: zAxisUnits !< The units that vertical coordinates are written in
   character(len=40) :: zAxisLongName !< Coordinate name to appear in files,
                                   !! e.g. "Target Potential Density" or "Height"
-  real, allocatable, dimension(:) :: sLayer !< Coordinate values of layer centers
-  real, allocatable, dimension(:) :: sInterface !< Coordinate values on interfaces
+  real, allocatable, dimension(:) :: sLayer !< Coordinate values of layer centers, in unscaled
+                        !! units that depend on the vertical coordinate, such as [kg m-3] for an
+                        !! isopycnal or some hybrid coordinates, [m] for a Z* coordinate,
+                        !! or [nondim] for a sigma coordinate.
+  real, allocatable, dimension(:) :: sInterface !< Coordinate values on interfaces, in the same
+                        !! unscale units as sLayer [various].
   integer :: direction = 1 !< Direction defaults to 1, positive up.
 
   ! The following variables give information about the vertical grid.
@@ -169,7 +174,8 @@ subroutine verticalGridInit( param_file, GV, US )
                  "units of thickness into m.", units="m H-1", default=1.0)
     GV%H_to_m = GV%H_to_m * H_rescale_factor
   endif
-  GV%mks_g_Earth = US%L_T_to_m_s**2*US%m_to_Z * GV%g_Earth
+  ! This is not used:  GV%mks_g_Earth = US%L_T_to_m_s**2*US%m_to_Z * GV%g_Earth
+  GV%g_Earth_Z_T2 = US%L_to_Z**2 * GV%g_Earth  ! This would result from scale=US%m_to_Z*US%T_to_s**2.
 #ifdef STATIC_MEMORY_
   ! Here NK_ is a macro, while nk is a variable.
   call get_param(param_file, mdl, "NK", nk, &
@@ -326,9 +332,11 @@ end function get_tr_flux_units
 
 !> This sets the coordinate data for the "layer mode" of the isopycnal model.
 subroutine setVerticalGridAxes( Rlay, GV, scale )
-  type(verticalGrid_type), intent(inout) :: GV   !< The container for vertical grid data
-  real, dimension(GV%ke),  intent(in)    :: Rlay !< The layer target density [R ~> kg m-3]
-  real,                    intent(in)    :: scale !< A unit scaling factor for Rlay
+  type(verticalGrid_type), intent(inout) :: GV    !< The container for vertical grid data
+  real, dimension(GV%ke),  intent(in)    :: Rlay  !< The layer target density [R ~> kg m-3]
+  real,                    intent(in)    :: scale !< A unit scaling factor for Rlay to convert
+                                                  !! it into the units of sInterface, usually
+                                                  !! [kg m-3 R-1 ~> 1] when used in layer mode.
   ! Local variables
   integer :: k, nk
 
